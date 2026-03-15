@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 struct ContentView: View {
     
@@ -89,18 +90,12 @@ struct ContentView: View {
                                         Text(nowPlayingSubtitle)
                                             .font(.subheadline)
                                             .foregroundColor(.gray)
-                                        
-                                        if let currentStem {
-                                            Text("Stem: \(displayName(for: currentStem))")
-                                                .font(.caption)
-                                                .foregroundColor(.green)
-                                        }
                                     }
                                     
                                     Spacer()
                                 }
                                 
-                                HStack(spacing: 16) {
+                                HStack {
                                     Button(action: {
                                         togglePlaybackFromHome()
                                     }) {
@@ -114,16 +109,6 @@ struct ContentView: View {
                                     .disabled(!canControlPlayback)
                                     .opacity(canControlPlayback ? 1.0 : 0.5)
                                     
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(homePlaybackStatus)
-                                            .font(.subheadline)
-                                            .foregroundColor(.white)
-                                        
-                                        Text(homePlaybackDetail)
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    }
-                                    
                                     Spacer()
                                 }
                             }
@@ -131,7 +116,6 @@ struct ContentView: View {
                             .background(Color.white.opacity(0.08))
                             .cornerRadius(20)
                         }
-                        
                         
                         // MARK: - Library Header
                         HStack {
@@ -183,7 +167,16 @@ struct ContentView: View {
                             }
                         }
                         
-                        
+                        // MARK: - Upload / Debug Status
+                        if !uploadStatus.isEmpty {
+                            Text(uploadStatus)
+                                .foregroundColor(.white)
+                                .font(.subheadline)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(12)
+                        }
                         
                         // MARK: - Library List
                         if isLoadingLibrary {
@@ -286,18 +279,6 @@ struct ContentView: View {
                             .background(Color.green.opacity(0.12))
                             .cornerRadius(12)
                         }
-                        
-                        // MARK: - Dev/Test Button
-                        Button("Test Pipeline (No Server)") {
-                            runMockPipelineTest()
-                        }
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(10)
-                        .padding(.top, 8)
                     }
                     .padding()
                 }
@@ -311,11 +292,6 @@ struct ContentView: View {
     
     // MARK: - Computed UI State
     
-    /*
-    var canControlPlayback: Bool {
-        bleManager.isConnected && currentSong != nil && currentStem != nil
-    }
-    */
     var canControlPlayback: Bool {
         currentSong != nil && currentStem != nil
     }
@@ -343,7 +319,7 @@ struct ContentView: View {
     
     var nowPlayingSubtitle: String {
         if let currentStem {
-            return isPlaying ? "Playing \(displayName(for: currentStem)) stem" : "Ready to resume"
+            return displayName(for: currentStem)
         }
         return ""
     }
@@ -362,16 +338,67 @@ struct ContentView: View {
     
     // MARK: - Actions
     
+    // End-to-end demo flow:
+    // 1. Download the selected stem from Lucas's backend
+    // 2. Fetch the plain-text lyric lines for that song
+    // 3. Update the home screen now-playing state
+    // 4. Send PLAY to the ESP32
+    // 5. Send lyric lines over BLE one by one at a fixed interval
     func startPlayback(song: Song, stem: StemType) {
-        currentSong = song
-        currentStem = stem
-        isPlaying = true
-        
-        if bleManager.isConnected {
-            bleManager.sendCommand("PLAY")
+        Task {
+            await MainActor.run {
+                currentSong = song
+                currentStem = stem
+                isPlaying = false
+                uploadStatus = "Loading \(displayName(for: stem)) for \(song.title)..."
+            }
+
+            do {
+                
+                let url = try await api.getOrDownloadStem(songTitle: song.title, stem: stem)
+                print("Stem file ready:", url)
+                
+                let duration = await getAudioDuration(from: url)
+                print("Audio duration:", duration ?? -1)
+
+                //let data = try Data(contentsOf: url)
+                //print("Stem size:", data.count, "bytes")
+
+                let exists = FileManager.default.fileExists(atPath: url.path)
+                print("Stem exists at path?", exists)
+
+                await MainActor.run {
+                    uploadStatus = "Fetching lyrics for \(song.title)..."
+                }
+
+                let lyrics = try await api.fetchLyrics(songTitle: song.title)
+                print("Fetched \(lyrics.count) lyric lines")
+
+                for line in lyrics.prefix(5) {
+                    print("Lyric line:", line)
+                }
+
+                await MainActor.run {
+                    isPlaying = true
+                    uploadStatus = "Now playing \(song.title) • \(displayName(for: stem))"
+                }
+
+                if bleManager.isConnected {
+                    bleManager.sendCommand("PLAY")
+                    await sendLyricsOverBLE(lyrics, songDurationSec: song.durationSec)                } else {
+                    await MainActor.run {
+                        uploadStatus = "Stem ready, but BLE is not connected"
+                    }
+                }
+
+            } catch {
+                await MainActor.run {
+                    isPlaying = false
+                    uploadStatus = "Playback setup failed: \(error.localizedDescription)"
+                }
+                print("Playback setup failed:", error)
+            }
         }
-        
-        uploadStatus = "Now playing \(song.title) • \(displayName(for: stem))"
     }
     
     func togglePlaybackFromHome() {
@@ -381,6 +408,9 @@ struct ContentView: View {
         bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
     }
     
+    // For tomorrow's demo there is not yet a real backend /library/ endpoint.
+    // So refresh just stops the loading state and preserves the in-memory songs
+    // that were added after successful uploads in this app session.
     func loadLibrary() {
         isLoadingLibrary = true
         
@@ -389,15 +419,9 @@ struct ContentView: View {
                 let songs = try await api.fetchLibrary()
                 
                 await MainActor.run {
-                    librarySongs = songs
-                    
-                    if let currentSong,
-                       !songs.contains(where: { $0.id == currentSong.id }) {
-                        self.currentSong = nil
-                        self.currentStem = nil
-                        isPlaying = false
+                    if !songs.isEmpty {
+                        librarySongs = songs
                     }
-                    
                     isLoadingLibrary = false
                 }
             } catch {
@@ -409,81 +433,218 @@ struct ContentView: View {
         }
     }
     
+    func parseSongAndArtist(from fileName: String) -> (song: String, artist: String)? {
+        let base = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
+        let parts = base.components(separatedBy: " - ")
+
+        guard parts.count >= 2 else { return nil }
+
+        let song = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !song.isEmpty, !artist.isEmpty else { return nil }
+        return (song, artist)
+    }
+
     func uploadWAV(url: URL) {
-        uploadStatus = "Uploading..."
-        
+        print("uploadWAV called with:", url)
+        uploadStatus = "Checking server for existing song..."
+
         Task {
             do {
-                _ = try await api.uploadSong(fileURL: url)
-                
+                if let parsed = parseSongAndArtist(from: url.lastPathComponent) {
+                    let exists = try await api.checkSongExists(
+                        songTitle: parsed.song,
+                        artist: parsed.artist
+                    )
+
+                    if exists {
+                        await MainActor.run {
+                            let localSong = Song(
+                                id: parsed.song,
+                                title: parsed.song,
+                                durationSec: nil
+                            )
+
+                            librarySongs.removeAll { $0.title == localSong.title }
+                            librarySongs.insert(localSong, at: 0)
+                            uploadStatus = "Song already exists on server: \(parsed.song)"
+                        }
+                        return
+                    }
+                }
+
                 await MainActor.run {
+                    uploadStatus = "Uploading and processing... this may take several minutes"
+                }
+
+                let response = try await api.uploadSong(fileURL: url)
+
+                await MainActor.run {
+                    let songTitleFromServer = response.song_name?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    let fallbackName = url.deletingPathExtension().lastPathComponent
+                        .components(separatedBy: " - ")
+                        .first ?? url.deletingPathExtension().lastPathComponent
+
+                    let finalSongTitle = (songTitleFromServer?.isEmpty == false)
+                        ? songTitleFromServer!
+                        : fallbackName
+
                     let localSong = Song(
-                        id: UUID().uuidString,
-                        title: url.deletingPathExtension().lastPathComponent,
+                        id: finalSongTitle,
+                        title: finalSongTitle,
                         durationSec: nil
                     )
-                    
+
+                    librarySongs.removeAll { $0.title == localSong.title }
                     librarySongs.insert(localSong, at: 0)
-                    uploadStatus = "Uploaded to library: \(localSong.title)"
+
+                    uploadStatus = response.message ?? "Uploaded to library: \(localSong.title)"
+                    print("Upload success, inserted into local library:", localSong.title)
                 }
+
             } catch {
                 await MainActor.run {
                     uploadStatus = "Error: \(error.localizedDescription)"
                 }
+                print("Upload error:", error.localizedDescription)
             }
         }
     }
     
-    func runMockPipelineTest() {
-        Task {
-            do {
-                let songs = try await api.fetchLibrary()
-                guard let song = songs.first else {
-                    await MainActor.run {
-                        uploadStatus = "No mock songs"
-                    }
-                    return
-                }
-                
-                let format = AudioFormat(
-                    sampleRate: 48000,
-                    channels: 1,
-                    bitsPerSample: 16,
-                    chunkDurationSec: 5
-                )
-                
-                let chunk0 = try await api.fetchStemChunk(songID: song.id, stem: .drums, chunkIndex: 0, format: format)
-                let chunk1 = try await api.fetchStemChunk(songID: song.id, stem: .drums, chunkIndex: 1, format: format)
-                let chunk2 = try await api.fetchStemChunk(songID: song.id, stem: .drums, chunkIndex: 2, format: format)
-                
-                let savedURL = try TempStorage.writeChunk(
-                    songID: song.id,
-                    stem: .drums,
-                    chunkIndex: 0,
-                    data: chunk0,
-                    ext: "pcm"
-                )
-                
-                let lyrics = try await api.fetchLyrics(songID: song.id)
-                
-                await MainActor.run {
-                    uploadStatus = """
-                    Mock OK
-                    chunk0 bytes: \(chunk0.count)
-                    chunk1 bytes: \(chunk1.count)
-                    chunk2 bytes: \(chunk2.count)
-                    saved: \(savedURL.lastPathComponent)
-                    lyrics lines: \(lyrics.count)
-                    """
-                }
-                
-                print("Saved chunk at:", savedURL)
-            } catch {
-                await MainActor.run {
-                    uploadStatus = "Test error: \(error.localizedDescription)"
-                }
+    func buildLyricChunks(
+        from lines: [String],
+        targetWordsPerChunk: Int = 4,
+        maxCharactersPerChunk: Int = 24
+    ) -> [String] {
+        
+        let allWords = lines
+            .flatMap { line in
+                line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .split(whereSeparator: { $0.isWhitespace })
+                    .map(String.init)
+            }
+        
+        guard !allWords.isEmpty else { return [] }
+        
+        var chunks: [String] = []
+        var currentWords: [String] = []
+        
+        for word in allWords {
+            let testWords = currentWords + [word]
+            let testChunk = testWords.joined(separator: " ")
+            
+            // If adding this word would make the chunk too long,
+            // finalize the current chunk first (if it has anything in it).
+            if !currentWords.isEmpty && testChunk.count > maxCharactersPerChunk {
+                chunks.append(currentWords.joined(separator: " "))
+                currentWords = [word]
+                continue
+            }
+            
+            currentWords.append(word)
+            
+            // Prefer chunks of about 4 words, as long as they fit
+            if currentWords.count >= targetWordsPerChunk {
+                chunks.append(currentWords.joined(separator: " "))
+                currentWords.removeAll()
             }
         }
+        
+        // Handle leftover words at the end
+        if !currentWords.isEmpty {
+            let leftover = currentWords.joined(separator: " ")
+            
+            if let last = chunks.last {
+                let merged = last + " " + leftover
+                if merged.count <= maxCharactersPerChunk {
+                    chunks[chunks.count - 1] = merged
+                } else {
+                    chunks.append(leftover)
+                }
+            } else {
+                chunks.append(leftover)
+            }
+        }
+        
+        return chunks
+    }
+    
+    // Sends lyric lines to the ESP32 one at a time.
+    // For tomorrow's demo we use a simple fixed delay instead of true timestamp sync.
+    func sendLyricsOverBLE(_ lyrics: [String], songDurationSec: Double?) async {
+        let lyricChunks = buildLyricChunks(
+            from: lyrics,
+            targetWordsPerChunk: 4,
+            maxCharactersPerChunk: 24
+        )
+        
+        guard !lyricChunks.isEmpty else {
+            await MainActor.run {
+                uploadStatus = "No lyric chunks to send"
+            }
+            return
+        }
+        
+        print("Total lyric lines fetched:", lyrics.count)
+        print("Total lyric chunks built:", lyricChunks.count)
+        
+        for (index, chunk) in lyricChunks.enumerated() {
+            print("Chunk \(index + 1): \(chunk)")
+        }
+        
+        let delayPerChunkSec: Double
+        if let duration = songDurationSec, duration > 0 {
+            delayPerChunkSec = max(1.0, duration / Double(lyricChunks.count))
+        } else {
+            delayPerChunkSec = 2.0
+        }
+        
+        print("Delay per chunk:", delayPerChunkSec, "seconds")
+        
+        for (index, chunk) in lyricChunks.enumerated() {
+            if Task.isCancelled { return }
+            
+            let cleanChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanChunk.isEmpty else { continue }
+            
+            let message = "LYRIC:\(cleanChunk)"
+            print("Sending lyric chunk \(index + 1)/\(lyricChunks.count):", message)
+            bleManager.sendCommand(message)
+            
+            await MainActor.run {
+                uploadStatus = "Sending lyric \(index + 1)/\(lyricChunks.count): \(cleanChunk)"
+            }
+            
+            let delayNs = UInt64(delayPerChunkSec * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delayNs)
+        }
+        
+        await MainActor.run {
+            if let song = currentSong, let stem = currentStem {
+                uploadStatus = "Lyric send complete for \(song.title) • \(displayName(for: stem))"
+            } else {
+                uploadStatus = "Lyric send complete"
+            }
+        }
+    }
+    
+    func getAudioDuration(from url: URL) async -> Double? {
+        let asset = AVURLAsset(url: url)
+
+        do {
+            let duration = try await asset.load(.duration)
+            let seconds = CMTimeGetSeconds(duration)
+
+            if seconds.isFinite {
+                return seconds
+            }
+        } catch {
+            print("Failed to load duration:", error)
+        }
+
+        return nil
     }
     
     func displayName(for stem: StemType) -> String {
@@ -593,22 +754,6 @@ struct SongDetailView: View {
                         .background(bleConnected ? Color.green : Color.gray.opacity(0.7))
                         .cornerRadius(18)
                     }
-                    /*
-                    if currentSong?.id == song.id, let currentStem {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Current Active Stem")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                            
-                            Text(displayName(for: currentStem))
-                                .font(.subheadline)
-                                .foregroundColor(.white)
-                        }
-                        .padding()
-                        .background(Color.white.opacity(0.06))
-                        .cornerRadius(14)
-                    }
-                     */
                 }
                 .padding()
                 .padding(.bottom, 20)
@@ -661,7 +806,9 @@ struct SongDetailView: View {
         case .other: return "Other"
         }
     }
+    
 }
+
 #Preview {
     ContentView()
         .environmentObject(BLEManager())
