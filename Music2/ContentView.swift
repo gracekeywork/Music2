@@ -25,6 +25,14 @@ struct ContentView: View {
     @State private var uploadStatus = ""
     @State private var isLoadingLibrary = false
     
+    // Lyric sending state
+    @State private var currentLyricChunks: [String] = []
+    @State private var currentLyricChunkIndex: Int = 0
+    @State private var lyricSendTask: Task<Void, Never>? = nil
+       
+    // Prevent handling the same incoming BLE notification repeatedly
+    @State private var lastHandledBLEMessage: String = ""
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -288,6 +296,9 @@ struct ContentView: View {
         .task {
             loadLibrary()
         }
+        .onChange(of: bleManager.lastReceivedMessage) { _, newMessage in
+            handleIncomingBLEMessage(newMessage)
+        }
     }
     
     // MARK: - Computed UI State
@@ -345,24 +356,26 @@ struct ContentView: View {
     // 4. Send PLAY to the ESP32
     // 5. Send lyric lines over BLE one by one at a fixed interval
     func startPlayback(song: Song, stem: StemType) {
+        // Stop any previous lyric task before starting a new song
+        lyricSendTask?.cancel()
+        lyricSendTask = nil
+        
         Task {
             await MainActor.run {
                 currentSong = song
                 currentStem = stem
                 isPlaying = false
+                currentLyricChunks = []
+                currentLyricChunkIndex = 0
                 uploadStatus = "Loading \(displayName(for: stem)) for \(song.title)..."
             }
 
             do {
-                
                 let url = try await api.getOrDownloadStem(songTitle: song.title, stem: stem)
                 print("Stem file ready:", url)
-                
+
                 let duration = await getAudioDuration(from: url)
                 print("Audio duration:", duration ?? -1)
-
-                //let data = try Data(contentsOf: url)
-                //print("Stem size:", data.count, "bytes")
 
                 let exists = FileManager.default.fileExists(atPath: url.path)
                 print("Stem exists at path?", exists)
@@ -374,18 +387,28 @@ struct ContentView: View {
                 let lyrics = try await api.fetchLyrics(songTitle: song.title)
                 print("Fetched \(lyrics.count) lyric lines")
 
-                for line in lyrics.prefix(5) {
-                    print("Lyric line:", line)
+                let lyricChunks = buildLyricChunks(
+                    from: lyrics,
+                    targetWordsPerChunk: 4,
+                    maxCharactersPerChunk: 24
+                )
+
+                print("Total lyric chunks built:", lyricChunks.count)
+                for (index, chunk) in lyricChunks.enumerated() {
+                    print("Chunk \(index + 1): \(chunk)")
                 }
 
                 await MainActor.run {
+                    currentLyricChunks = lyricChunks
+                    currentLyricChunkIndex = 0
                     isPlaying = true
                     uploadStatus = "Now playing \(song.title) • \(displayName(for: stem))"
                 }
 
                 if bleManager.isConnected {
                     bleManager.sendCommand("PLAY")
-                    await sendLyricsOverBLE(lyrics, songDurationSec: song.durationSec)                } else {
+                    startLyricSendingLoop(songDurationSec: duration)
+                } else {
                     await MainActor.run {
                         uploadStatus = "Stem ready, but BLE is not connected"
                     }
@@ -394,6 +417,8 @@ struct ContentView: View {
             } catch {
                 await MainActor.run {
                     isPlaying = false
+                    currentLyricChunks = []
+                    currentLyricChunkIndex = 0
                     uploadStatus = "Playback setup failed: \(error.localizedDescription)"
                 }
                 print("Playback setup failed:", error)
@@ -406,6 +431,13 @@ struct ContentView: View {
         
         isPlaying.toggle()
         bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
+        
+        if isPlaying {
+            uploadStatus = "Resumed \(currentSong?.title ?? "song")"
+            startLyricSendingLoop(songDurationSec: nil)
+        } else {
+            uploadStatus = "Paused \(currentSong?.title ?? "song")"
+        }
     }
     
     // For tomorrow's demo there is not yet a real backend /library/ endpoint.
@@ -573,59 +605,91 @@ struct ContentView: View {
     
     // Sends lyric lines to the ESP32 one at a time.
     // For tomorrow's demo we use a simple fixed delay instead of true timestamp sync.
-    func sendLyricsOverBLE(_ lyrics: [String], songDurationSec: Double?) async {
-        let lyricChunks = buildLyricChunks(
-            from: lyrics,
-            targetWordsPerChunk: 4,
-            maxCharactersPerChunk: 24
-        )
+    func startLyricSendingLoop(songDurationSec: Double?) {
+        lyricSendTask?.cancel()
         
-        guard !lyricChunks.isEmpty else {
+        lyricSendTask = Task {
+            await runLyricSendingLoop(songDurationSec: songDurationSec)
+        }
+    }
+    
+    func runLyricSendingLoop(songDurationSec: Double?) async {
+        guard !currentLyricChunks.isEmpty else {
             await MainActor.run {
                 uploadStatus = "No lyric chunks to send"
             }
             return
         }
         
-        print("Total lyric lines fetched:", lyrics.count)
-        print("Total lyric chunks built:", lyricChunks.count)
-        
-        for (index, chunk) in lyricChunks.enumerated() {
-            print("Chunk \(index + 1): \(chunk)")
-        }
-        
         let delayPerChunkSec: Double
         if let duration = songDurationSec, duration > 0 {
-            delayPerChunkSec = max(1.0, duration / Double(lyricChunks.count))
+            delayPerChunkSec = max(1.0, duration / Double(max(currentLyricChunks.count, 1)))
         } else {
             delayPerChunkSec = 2.0
         }
         
         print("Delay per chunk:", delayPerChunkSec, "seconds")
         
-        for (index, chunk) in lyricChunks.enumerated() {
+        while true {
             if Task.isCancelled { return }
             
-            let cleanChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanChunk.isEmpty else { continue }
-            
-            let message = "LYRIC:\(cleanChunk)"
-            print("Sending lyric chunk \(index + 1)/\(lyricChunks.count):", message)
-            bleManager.sendCommand(message)
-            
-            await MainActor.run {
-                uploadStatus = "Sending lyric \(index + 1)/\(lyricChunks.count): \(cleanChunk)"
+            if !isPlaying {
+                try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 sec
+                continue
             }
+            
+            if currentLyricChunkIndex >= currentLyricChunks.count {
+                await MainActor.run {
+                    if let song = currentSong, let stem = currentStem {
+                        uploadStatus = "Lyric send complete for \(song.title) • \(displayName(for: stem))"
+                    } else {
+                        uploadStatus = "Lyric send complete"
+                    }
+                }
+                return
+            }
+            
+            let chunk = currentLyricChunks[currentLyricChunkIndex]
+            let cleanChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if !cleanChunk.isEmpty {
+                let message = "LYRIC:\(cleanChunk)"
+                print("Sending lyric chunk \(currentLyricChunkIndex + 1)/\(currentLyricChunks.count):", message)
+                bleManager.sendCommand(message)
+                
+                await MainActor.run {
+                    uploadStatus = "Sending lyric \(currentLyricChunkIndex + 1)/\(currentLyricChunks.count): \(cleanChunk)"
+                }
+            }
+            
+            currentLyricChunkIndex += 1
             
             let delayNs = UInt64(delayPerChunkSec * 1_000_000_000)
             try? await Task.sleep(nanoseconds: delayNs)
         }
+    }
+    
+    func handleIncomingBLEMessage(_ message: String) {
+        let cleanMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanMessage.isEmpty else { return }
         
-        await MainActor.run {
-            if let song = currentSong, let stem = currentStem {
-                uploadStatus = "Lyric send complete for \(song.title) • \(displayName(for: stem))"
+        // Prevent repeat handling of the same published value
+        guard cleanMessage != lastHandledBLEMessage else { return }
+        lastHandledBLEMessage = cleanMessage
+        
+        print("Handling incoming BLE message:", cleanMessage)
+        
+        if cleanMessage == "PLAYPAUSE_PRESSED" || cleanMessage.starts(with: "BUTTON_PRESSED") {
+            guard canControlPlayback else { return }
+            
+            isPlaying.toggle()
+            bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
+            
+            if isPlaying {
+                uploadStatus = "Resumed from glasses control"
+                startLyricSendingLoop(songDurationSec: nil)
             } else {
-                uploadStatus = "Lyric send complete"
+                uploadStatus = "Paused from glasses control"
             }
         }
     }

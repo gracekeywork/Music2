@@ -243,6 +243,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         
         // Write the bytes to the characteristic on the ESP32
         // .withResponse means the peripheral will acknowledge receipt
-        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        //peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        DispatchQueue.main.async {
+            peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        }
     }
 }
