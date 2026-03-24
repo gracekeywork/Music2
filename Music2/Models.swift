@@ -15,11 +15,29 @@ import Foundation   // Basic Swift types like UUID, Codable, etc.
 //                will be useful later for building intensity sliders for each stem
 // Codable - means it can be converted to/from JSON automatically
 //           needed if Lucas ever sends stem info as part of a JSON response
-enum StemType: String, CaseIterable, Codable {
+enum StemType: String, CaseIterable, Hashable {
     case drums
     case bass
     case vocals
     case other
+}
+
+enum StemChoice: String, CaseIterable, Hashable {
+    case none
+    case drums
+    case bass
+    case vocals
+    case other
+
+    var asStemType: StemType? {
+        switch self {
+        case .none: return nil
+        case .drums: return .drums
+        case .bass: return .bass
+        case .vocals: return .vocals
+        case .other: return .other
+        }
+    }
 }
 
 // ── SONG ──────────────────────────────────────────────────────────────────────

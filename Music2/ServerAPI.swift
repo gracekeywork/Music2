@@ -17,8 +17,12 @@ final class ServerAPI {
     // Lucas's server address - swap this string when he has a real server running
     // Currently points to a local machine on the school network
     // let baseURL = URL(string: "http://10.5.22.60:8000")!
-    //let baseURL = URL(string: "http://192.168.68.53:8000")!
-    let baseURL = URL(string: "http://192.168.1.168:8000")!
+    //let baseURL = URL(string: "http://192.168.68.57:8000")!
+    //192.168.68.57
+    
+    let baseURL = URL(string: "http://10.5.2.150:8000")!
+
+    //let baseURL = URL(string: "http://10.4.69.53:8000")!
 
     // ── RESPONSE MODELS ───────────────────────────────────────────────────────
 
@@ -93,7 +97,10 @@ final class ServerAPI {
         defer { fileURL.stopAccessingSecurityScopedResource() }
 
         // Read the entire WAV file into memory as raw bytes
-        let audioData = try Data(contentsOf: fileURL)
+        //let audioData = try Data(contentsOf: fileURL)
+        let audioData = try await Task.detached(priority: .userInitiated) {
+            try Data(contentsOf: fileURL)
+        }.value
         print("Audio data bytes:", audioData.count)
 
         // Build the full URL: baseURL + "/uploadfile/"
@@ -208,7 +215,10 @@ final class ServerAPI {
             )
         }
 
-        let wavData = try Data(contentsOf: wavURL)
+        //let wavData = try Data(contentsOf: wavURL)
+        let wavData = try await Task.detached(priority: .userInitiated) {
+            try Data(contentsOf: wavURL)
+        }.value
 
         // WAV files start with a 44-byte header describing the audio format
         // We skip it because we only want the raw PCM audio bytes
@@ -267,7 +277,10 @@ final class ServerAPI {
         print("Stem download status code:", http.statusCode)
         print("Stem MIME type:", http.value(forHTTPHeaderField: "Content-Type") ?? "nil")
 
-        let tempData = try Data(contentsOf: tempURL)
+        //let tempData = try Data(contentsOf: tempURL)
+        let tempData = try await Task.detached(priority: .utility) {
+            try Data(contentsOf: tempURL)
+        }.value
         print("Temp downloaded size:", tempData.count)
 
         if let text = String(data: tempData, encoding: .utf8), tempData.count < 500 {
@@ -292,7 +305,10 @@ final class ServerAPI {
 
         try FileManager.default.moveItem(at: tempURL, to: localURL)
 
-        let savedData = try Data(contentsOf: localURL)
+        //let savedData = try Data(contentsOf: localURL)
+        let savedData = try await Task.detached(priority: .utility) {
+            try Data(contentsOf: localURL)
+        }.value
         print("Saved stem size:", savedData.count)
         print("Saved stem path:", localURL.path)
 

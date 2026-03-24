@@ -9,12 +9,16 @@ import Foundation       // Basic Swift stuff - always needed for any Swift code
 import CoreBluetooth    // Apple's Bluetooth Low Energy framework - lets us talk to BLE devices
 import Combine          // Needed for @Published to work - allows UI to watch for changes
 
+
+
 // This class handles ALL Bluetooth communication with the ESP32
 // NSObject - required by Apple's older frameworks like CoreBluetooth
 // ObservableObject - means the UI can watch this class and update when things change
 // CBCentralManagerDelegate - means this class will handle BLE central events (scanning, connecting)
 // CBPeripheralDelegate - means this class will handle peripheral events (receiving data from ESP32)
 class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+   
+    @Published var messageEventID = UUID()
     
     // We use lazy because CoreBluetooth expects the delegate to exist first
     // before the CBCentralManager is fully created
@@ -186,6 +190,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     // CALLED AUTOMATICALLY when ESP32 sends us data
     // This is how we receive button presses or any other messages from ESP32
+    /*
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
             print("didUpdateValueFor error:", error.localizedDescription)
@@ -200,6 +205,24 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             // All UI updates must happen on the main thread
             DispatchQueue.main.async {
                 self.lastReceivedMessage = message
+            }
+        } else {
+            print("Received non-text BLE data or empty value")
+        }
+    }
+    */
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error {
+            print("didUpdateValueFor error:", error.localizedDescription)
+            return
+        }
+
+        if let data = characteristic.value, let message = String(data: data, encoding: .utf8) {
+            print("Received from ESP32:", message)
+
+            DispatchQueue.main.async {
+                self.lastReceivedMessage = message
+                self.messageEventID = UUID()
             }
         } else {
             print("Received non-text BLE data or empty value")

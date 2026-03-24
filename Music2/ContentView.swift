@@ -16,7 +16,13 @@ struct ContentView: View {
     
     // Current now-playing state for home screen
     @State private var currentSong: Song? = nil
-    @State private var currentStem: StemType? = nil
+    //Starting with drums as a default
+    @State private var selectedStem1: StemType = .drums
+    @State private var selectedStem2: StemChoice = .none
+
+    @State private var stemLevel1: Double = 0.5
+    @State private var stemLevel2: Double = 0.5
+    //@State private var currentStem: StemType? = nil
     @State private var isPlaying = false
     
     // Library / upload state
@@ -33,6 +39,30 @@ struct ContentView: View {
     // Prevent handling the same incoming BLE notification repeatedly
     @State private var lastHandledBLEMessage: String = ""
     
+    var activeStem1: StemType {
+        selectedStem1
+    }
+
+    var activeStem2: StemType? {
+        selectedStem2.asStemType
+    }
+    
+    var activeStemDisplayText: String {
+        if let stem2 = activeStem2 {
+            return "\(displayName(for: activeStem1)) + \(displayName(for: stem2))"
+        } else {
+            return displayName(for: activeStem1)
+        }
+    }
+    var requestedStems: [StemType] {
+        var stems: [StemType] = [selectedStem1]
+
+        if let stem2 = selectedStem2.asStemType, stem2 != selectedStem1 {
+            stems.append(stem2)
+        }
+
+        return stems
+    }
     var body: some View {
         NavigationStack {
             ZStack {
@@ -70,9 +100,69 @@ struct ContentView: View {
                             .background(Color.white.opacity(0.08))
                             .cornerRadius(12)
                         }
+                        // MARK: - Global Playback Settings
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Playback Settings")
+                                .font(.headline)
+                                .foregroundColor(.white)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Stem 1")
+                                    .foregroundColor(.white)
+
+                                Picker("Stem 1", selection: $selectedStem1) {
+                                    Text("Drums").tag(StemType.drums)
+                                    Text("Bass").tag(StemType.bass)
+                                    Text("Vocals").tag(StemType.vocals)
+                                    Text("Other").tag(StemType.other)
+                                }
+                                .pickerStyle(.segmented)
+
+                                HStack {
+                                    Text("Level")
+                                        .foregroundColor(.white)
+                                    Spacer()
+                                    Text("\(Int(stemLevel1 * 100))%")
+                                        .foregroundColor(.gray)
+                                }
+
+                                Slider(value: $stemLevel1, in: 0...1)
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Stem 2")
+                                    .foregroundColor(.white)
+
+                                Picker("Stem 2", selection: $selectedStem2) {
+                                    Text("None").tag(StemChoice.none)
+                                    Text("Drums").tag(StemChoice.drums)
+                                    Text("Bass").tag(StemChoice.bass)
+                                    Text("Vocals").tag(StemChoice.vocals)
+                                    Text("Other").tag(StemChoice.other)
+                                }
+                                .pickerStyle(.segmented)
+
+                                HStack {
+                                    Text("Level")
+                                        .foregroundColor(.white)
+                                    Spacer()
+                                    Text("\(Int(stemLevel2 * 100))%")
+                                        .foregroundColor(.gray)
+                                }
+
+                                Slider(value: $stemLevel2, in: 0...1)
+                                    .disabled(selectedStem2 == .none)
+                                    .opacity(selectedStem2 == .none ? 0.4 : 1.0)
+                            }
+                        }
+                        .padding()
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(16)
+                        
+                        
                         
                         // MARK: - Now Playing Card
-                        if currentSong != nil && currentStem != nil {
+                        if currentSong != nil  {
                             VStack(alignment: .leading, spacing: 16) {
                                 Text("Now Playing")
                                     .font(.headline)
@@ -209,16 +299,8 @@ struct ContentView: View {
                         } else {
                             VStack(spacing: 12) {
                                 ForEach(librarySongs) { song in
-                                    NavigationLink {
-                                        SongDetailView(
-                                            song: song,
-                                            bleConnected: bleManager.isConnected,
-                                            currentSong: currentSong,
-                                            currentStem: currentStem,
-                                            onPlayStem: { chosenSong, chosenStem in
-                                                startPlayback(song: chosenSong, stem: chosenStem)
-                                            }
-                                        )
+                                    Button {
+                                        startPlayback(song: song)
                                     } label: {
                                         HStack(spacing: 14) {
                                             RoundedRectangle(cornerRadius: 12)
@@ -228,26 +310,26 @@ struct ContentView: View {
                                                     Image(systemName: "music.note")
                                                         .foregroundColor(.white)
                                                 )
-                                            
+
                                             VStack(alignment: .leading, spacing: 4) {
                                                 Text(song.title)
                                                     .foregroundColor(.white)
                                                     .font(.headline)
                                                     .multilineTextAlignment(.leading)
-                                                
+
                                                 if let duration = song.durationSec {
                                                     Text(String(format: "%.0f sec", duration))
                                                         .foregroundColor(.gray)
                                                         .font(.caption)
                                                 } else {
-                                                    Text("Tap to choose stem")
+                                                    Text("Tap to play from here")
                                                         .foregroundColor(.gray)
                                                         .font(.caption)
                                                 }
                                             }
-                                            
+
                                             Spacer()
-                                            
+
                                             if currentSong?.id == song.id {
                                                 Image(systemName: "speaker.wave.2.fill")
                                                     .foregroundColor(.green)
@@ -296,15 +378,25 @@ struct ContentView: View {
         .task {
             loadLibrary()
         }
-        .onChange(of: bleManager.lastReceivedMessage) { _, newMessage in
-            handleIncomingBLEMessage(newMessage)
+        .onChange(of: bleManager.messageEventID) {
+            handleIncomingBLEMessage(bleManager.lastReceivedMessage)
+        }
+        .onChange(of: selectedStem1) {
+            if selectedStem2.asStemType == selectedStem1 {
+                selectedStem2 = .none
+            }
+        }
+        .onChange(of: selectedStem2) {
+            if selectedStem2.asStemType == selectedStem1 {
+                selectedStem2 = .none
+            }
         }
     }
     
     // MARK: - Computed UI State
     
     var canControlPlayback: Bool {
-        currentSong != nil && currentStem != nil
+        currentSong != nil
     }
     
     var homePlayButtonColor: Color {
@@ -329,22 +421,19 @@ struct ContentView: View {
     }
     
     var nowPlayingSubtitle: String {
-        if let currentStem {
-            return displayName(for: currentStem)
-        }
-        return ""
+        activeStemDisplayText
     }
     
     var homePlaybackStatus: String {
-        if currentSong == nil || currentStem == nil { return "No active song" }
+        if currentSong == nil { return "No active song" }
         return isPlaying ? "Playing" : "Paused"
     }
-    
+
     var homePlaybackDetail: String {
-        guard let song = currentSong, let stem = currentStem else {
-            return "Select a song and stem from the library"
+        guard let song = currentSong else {
+            return "Select a song from the library"
         }
-        return "\(song.title) • \(displayName(for: stem))"
+        return "\(song.title) • \(activeStemDisplayText)"
     }
     
     // MARK: - Actions
@@ -355,37 +444,39 @@ struct ContentView: View {
     // 3. Update the home screen now-playing state
     // 4. Send PLAY to the ESP32
     // 5. Send lyric lines over BLE one by one at a fixed interval
-    func startPlayback(song: Song, stem: StemType) {
-        // Stop any previous lyric task before starting a new song
+    func startPlayback(song: Song) {
         lyricSendTask?.cancel()
         lyricSendTask = nil
-        
+
+        let stemsToLoad = requestedStems
+
         Task {
             await MainActor.run {
                 currentSong = song
-                currentStem = stem
                 isPlaying = false
                 currentLyricChunks = []
                 currentLyricChunkIndex = 0
-                uploadStatus = "Loading \(displayName(for: stem)) for \(song.title)..."
+                uploadStatus = "Loading \(activeStemDisplayText) for \(song.title)..."
             }
 
             do {
-                let url = try await api.getOrDownloadStem(songTitle: song.title, stem: stem)
-                print("Stem file ready:", url)
+                var stemURLs: [StemType: URL] = [:]
 
-                let duration = await getAudioDuration(from: url)
-                print("Audio duration:", duration ?? -1)
+                for stem in stemsToLoad {
+                    let url = try await api.getOrDownloadStem(songTitle: song.title, stem: stem)
+                    stemURLs[stem] = url
+                    print("Stem file ready for \(displayName(for: stem)):", url)
+                }
 
-                let exists = FileManager.default.fileExists(atPath: url.path)
-                print("Stem exists at path?", exists)
+                // Use first stem for duration if needed
+                let primaryStem = stemsToLoad[0]
+                let duration = await getAudioDuration(from: stemURLs[primaryStem]!)
 
                 await MainActor.run {
                     uploadStatus = "Fetching lyrics for \(song.title)..."
                 }
 
                 let lyrics = try await api.fetchLyrics(songTitle: song.title)
-                print("Fetched \(lyrics.count) lyric lines")
 
                 let lyricChunks = buildLyricChunks(
                     from: lyrics,
@@ -393,16 +484,11 @@ struct ContentView: View {
                     maxCharactersPerChunk: 24
                 )
 
-                print("Total lyric chunks built:", lyricChunks.count)
-                for (index, chunk) in lyricChunks.enumerated() {
-                    print("Chunk \(index + 1): \(chunk)")
-                }
-
                 await MainActor.run {
                     currentLyricChunks = lyricChunks
                     currentLyricChunkIndex = 0
                     isPlaying = true
-                    uploadStatus = "Now playing \(song.title) • \(displayName(for: stem))"
+                    uploadStatus = "Now playing \(song.title) • \(activeStemDisplayText)"
                 }
 
                 if bleManager.isConnected {
@@ -410,18 +496,15 @@ struct ContentView: View {
                     startLyricSendingLoop(songDurationSec: duration)
                 } else {
                     await MainActor.run {
-                        uploadStatus = "Stem ready, but BLE is not connected"
+                        uploadStatus = "Stems ready, but BLE is not connected"
                     }
                 }
 
             } catch {
                 await MainActor.run {
                     isPlaying = false
-                    currentLyricChunks = []
-                    currentLyricChunkIndex = 0
-                    uploadStatus = "Playback setup failed: \(error.localizedDescription)"
+                    uploadStatus = "Playback failed: \(error.localizedDescription)"
                 }
-                print("Playback setup failed:", error)
             }
         }
     }
@@ -640,8 +723,8 @@ struct ContentView: View {
             
             if currentLyricChunkIndex >= currentLyricChunks.count {
                 await MainActor.run {
-                    if let song = currentSong, let stem = currentStem {
-                        uploadStatus = "Lyric send complete for \(song.title) • \(displayName(for: stem))"
+                    if let song = currentSong {
+                        uploadStatus = "Lyric send complete for \(song.title) • \(activeStemDisplayText)"
                     } else {
                         uploadStatus = "Lyric send complete"
                     }
@@ -672,26 +755,32 @@ struct ContentView: View {
     func handleIncomingBLEMessage(_ message: String) {
         let cleanMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanMessage.isEmpty else { return }
-        
-        // Prevent repeat handling of the same published value
-        guard cleanMessage != lastHandledBLEMessage else { return }
-        lastHandledBLEMessage = cleanMessage
-        
+
         print("Handling incoming BLE message:", cleanMessage)
-        
+
+        // Always allow repeated button presses
         if cleanMessage == "PLAYPAUSE_PRESSED" || cleanMessage.starts(with: "BUTTON_PRESSED") {
             guard canControlPlayback else { return }
-            
-            isPlaying.toggle()
-            bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
-            
-            if isPlaying {
-                uploadStatus = "Resumed from glasses control"
-                startLyricSendingLoop(songDurationSec: nil)
-            } else {
-                uploadStatus = "Paused from glasses control"
+
+            DispatchQueue.main.async {
+                self.isPlaying.toggle()
+                let cmd = self.isPlaying ? "PLAY" : "PAUSE"
+                print("Sending command to ESP32:", cmd)
+                self.bleManager.sendCommand(cmd)
+
+                if self.isPlaying {
+                    self.uploadStatus = "Resumed from glasses control"
+                    self.startLyricSendingLoop(songDurationSec: nil)
+                } else {
+                    self.uploadStatus = "Paused from glasses control"
+                }
             }
+            return
         }
+
+        // Keep dedupe for other BLE messages
+        guard cleanMessage != lastHandledBLEMessage else { return }
+        lastHandledBLEMessage = cleanMessage
     }
     
     func getAudioDuration(from url: URL) async -> Double? {
@@ -721,6 +810,7 @@ struct ContentView: View {
     }
 }
 
+/*
 struct SongDetailView: View {
     
     let song: Song
@@ -872,6 +962,7 @@ struct SongDetailView: View {
     }
     
 }
+*/
 
 #Preview {
     ContentView()
