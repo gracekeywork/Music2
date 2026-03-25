@@ -23,7 +23,9 @@ class Song_request(BaseModel):
     index : int | None = None
     file : str | None = None
 
-song_list = []
+#CREATE SONG OBJECTS HERE IF THEY ARE ALREADY STORED LOCALLY
+#server won't return a song if it isn't uploaded first; this bypasses the need to "upload" when testing
+song_list = [Song("Rooster", "Alice in Chains", "Rooster - Alice in Chains.wav")]
 current_id = 0
 
 @server.get("/") #decorator: links the below function to the path "/" and operation get
@@ -33,28 +35,30 @@ def root():
 @server.post("/uploadfile/")
 async def upload_song(file: UploadFile):
 
-    #below assumes a uniform naming convention for wav files (ex. song_name - artist_name)
+    #SET ARTIST AND SONG NAME OF FILE (ex. song_name - artist_name)
     index = file.filename.find('-')
     index2 = file.filename.find('.')
     new_song = Song(file.filename[:index-1], file.filename[index+2:index2], file.filename)
 
-    #add new song to list
+    #ADD NEW SONG TO LIST IF DNE ALREADY
+    for song in song_list:
+        if song.name == new_song.name:
+            return "Song already exists"
+        
+    #IF LOOP REACHES HERE, SONG DOES NOT YET EXIST
+    #APPEND TO LIST, MAKE DIRECTORY, AND SAVE TO DIRECTORY
     song_list.append(new_song)
+    os.mkdir(new_song.name)
 
-    #create directory
-    try: os.mkdir(new_song.name)
-    except FileExistsError: print("File already exists")
-
-    #save the .wav file
     with open(file.filename, "wb") as f:
         contents = await file.read()
         f.write(contents)
 
-        #run song separation
-        #separate_song(new_song)
+    #run song separation
+    separate_song(new_song)
 
-        #run lyric extraction
-        #extract_lyrics(new_song)
+    #run lyric extraction
+    extract_lyrics(new_song)
 
     #before returning true, move all files into its 'Song name' directory
     shutil.move(new_song.name+" - "+new_song.artist+".wav", new_song.name)
@@ -64,7 +68,7 @@ async def upload_song(file: UploadFile):
     shutil.move(new_song.name+" - "+new_song.artist+"_guitar.wav", new_song.name)
     shutil.move(new_song.name+" - "+new_song.artist+"_lyrics.txt", new_song.name)
 
-    #save filepath to lyrics in song object
+    #SAVE LYRIC FILEPATH
     new_song.lyric_file = new_song.name+"/"+new_song.name+" - "+new_song.artist+"_lyrics.txt"
     print(new_song.lyric_file)
 
@@ -73,9 +77,10 @@ async def upload_song(file: UploadFile):
 @server.get("/requests/{song_title}/{instrument_type}")
 async def return_song(song_title: str, instrument_type: str):
     return_file = ''
-    ####song_list.append(Song("Rooster", "Alice in Chains", "Rooster - Alice in Chains.wav")) #JUST FOR TESTING
+    #PARSE SONG LIST FOR MATCHING TITLE
     for song in song_list:
         if song.name == song_title:
+            #RETURN PROPER INSTRUMENT STEM (song_name/song_name - artist_name.instrument.wav)
             return_file = song.name+"/"+song.name+" - "+song.artist+"_"+instrument_type+".wav"
             return FileResponse(return_file)
     if return_file == '':
@@ -122,4 +127,4 @@ def extract_lyrics(song_obj):
         f.write(lyric_text)
 
 #uvicorn server:server --reload <-- private launch
-#uvicorn server:server --host 10.5.22.60 --port 8000 --reload
+#uvicorn server:server --host 10.5.2.150 --port 8000 --reload
