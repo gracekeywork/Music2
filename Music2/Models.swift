@@ -50,6 +50,7 @@ struct Song: Identifiable, Codable {
     let id: String          // unique song identifier assigned by Lucas's server
     let title: String       // display name shown in the app UI
     let durationSec: Double? // total song length - optional because Lucas might not always send it
+    
 }
 
 // ── AUDIO FORMAT ──────────────────────────────────────────────────────────────

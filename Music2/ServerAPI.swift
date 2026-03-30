@@ -20,7 +20,7 @@ final class ServerAPI {
     //let baseURL = URL(string: "http://192.168.68.57:8000")!
     //192.168.68.57
     
-    let baseURL = URL(string: "http://10.5.2.150:8000")!
+    let baseURL = URL(string: "http://192.168.68.59:8000")!
 
     //let baseURL = URL(string: "http://10.4.69.53:8000")!
 
@@ -48,7 +48,7 @@ final class ServerAPI {
         let artist: String
     }
 
-    func checkSongExists(songTitle: String, artist: String) async throws -> Bool {
+    /*func checkSongExists(songTitle: String, artist: String) async throws -> Bool {
         let url = baseURL
             .appendingPathComponent("song_exists")
             .appendingPathComponent(songTitle)
@@ -74,6 +74,7 @@ final class ServerAPI {
         let decoded = try JSONDecoder().decode(SongExistsResponse.self, from: data)
         return decoded.exists
     }
+     */
     // ── UPLOAD ────────────────────────────────────────────────────────────────
 
     // Sends a WAV file to Lucas's server for processing
@@ -173,17 +174,38 @@ final class ServerAPI {
             )
         }
 
-        let decoded = try JSONDecoder().decode(UploadResponse.self, from: data)
+        if let responseText = String(data: data, encoding: .utf8) {
+            print("Upload response text:", responseText)
 
-        if decoded.success == false {
-            throw NSError(
-                domain: "ServerAPI",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: decoded.error ?? "Upload failed"]
-            )
+            let cleaned = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if cleaned == "true" || cleaned == "True" {
+                return UploadResponse(
+                    success: true,
+                    message: "Upload and processing complete",
+                    song_name: nil,
+                    artist: nil,
+                    error: nil
+                )
+            }
+
+            if cleaned.contains("Song already exists") {
+                return UploadResponse(
+                    success: true,
+                    message: "Song already exists",
+                    song_name: nil,
+                    artist: nil,
+                    error: nil
+                )
+            }
         }
 
-        return decoded
+        throw NSError(
+            domain: "ServerAPI",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Unexpected upload response from server"]
+        )
+
     }
 
     // ── LIBRARY ───────────────────────────────────────────────────────────────
@@ -329,6 +351,7 @@ final class ServerAPI {
         return docs.appendingPathComponent("\(songTitle)_\(stemName).wav")
     }
     
+    /*
     func getOrDownloadStem(songTitle: String, stem: StemType) async throws -> URL {
         let localURL = localStemURL(songTitle: songTitle, stem: stem)
 
@@ -338,6 +361,11 @@ final class ServerAPI {
         }
 
         print("Local stem not found, downloading from server...")
+        return try await downloadFullStem(songTitle: songTitle, stem: stem)
+    }
+     */
+    func getOrDownloadStem(songTitle: String, stem: StemType) async throws -> URL {
+        print("Forcing fresh download from server for:", stem, "of", songTitle)
         return try await downloadFullStem(songTitle: songTitle, stem: stem)
     }
 

@@ -24,6 +24,8 @@ struct ContentView: View {
     @State private var stemLevel2: Double = 0.5
     //@State private var currentStem: StemType? = nil
     @State private var isPlaying = false
+    @State private var songAdvanceTask: Task<Void, Never>? = nil
+    @State private var currentSongDuration: Double? = nil
     
     // Library / upload state
     @State private var librarySongs: [Song] = []
@@ -35,6 +37,8 @@ struct ContentView: View {
     @State private var currentLyricChunks: [String] = []
     @State private var currentLyricChunkIndex: Int = 0
     @State private var lyricSendTask: Task<Void, Never>? = nil
+    
+    @State private var isPlaybackSettingsExpanded = false
        
     // Prevent handling the same incoming BLE notification repeatedly
     @State private var lastHandledBLEMessage: String = ""
@@ -100,65 +104,103 @@ struct ContentView: View {
                             .background(Color.white.opacity(0.08))
                             .cornerRadius(12)
                         }
+                    
                         // MARK: - Global Playback Settings
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Playback Settings")
-                                .font(.headline)
-                                .foregroundColor(.white)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Stem 1")
-                                    .foregroundColor(.white)
-
-                                Picker("Stem 1", selection: $selectedStem1) {
-                                    Text("Drums").tag(StemType.drums)
-                                    Text("Bass").tag(StemType.bass)
-                                    Text("Vocals").tag(StemType.vocals)
-                                    Text("Other").tag(StemType.other)
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isPlaybackSettingsExpanded.toggle()
                                 }
-                                .pickerStyle(.segmented)
-
+                            }) {
                                 HStack {
-                                    Text("Level")
+                                    Text("Playback Settings")
+                                        .font(.headline)
                                         .foregroundColor(.white)
-                                    Spacer()
-                                    Text("\(Int(stemLevel1 * 100))%")
-                                        .foregroundColor(.gray)
-                                }
 
-                                Slider(value: $stemLevel1, in: 0...1)
+                                    Spacer()
+
+                                    Image(systemName: isPlaybackSettingsExpanded ? "chevron.up" : "chevron.down")
+                                        .foregroundColor(.white)
+                                }
                             }
+                            .buttonStyle(.plain)
 
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Stem 2")
-                                    .foregroundColor(.white)
+                            if isPlaybackSettingsExpanded {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Stem 1")
+                                            .foregroundColor(.white)
 
-                                Picker("Stem 2", selection: $selectedStem2) {
-                                    Text("None").tag(StemChoice.none)
-                                    Text("Drums").tag(StemChoice.drums)
-                                    Text("Bass").tag(StemChoice.bass)
-                                    Text("Vocals").tag(StemChoice.vocals)
-                                    Text("Other").tag(StemChoice.other)
-                                }
-                                .pickerStyle(.segmented)
+                                        Picker("Stem 1", selection: $selectedStem1) {
+                                            Text("Drums").tag(StemType.drums)
+                                            Text("Bass").tag(StemType.bass)
+                                            Text("Vocals").tag(StemType.vocals)
+                                            Text("Other").tag(StemType.other)
+                                        }
+                                        .pickerStyle(.segmented)
 
-                                HStack {
-                                    Text("Level")
+                                        HStack {
+                                            Text("Level")
+                                                .foregroundColor(.white)
+                                            Spacer()
+                                            Text("\(Int(stemLevel1 * 100))%")
+                                                .foregroundColor(.gray)
+                                        }
+
+                                        Slider(value: $stemLevel1, in: 0...1)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Stem 2")
+                                            .foregroundColor(.white)
+
+                                        Picker("Stem 2", selection: $selectedStem2) {
+                                            Text("None").tag(StemChoice.none)
+                                            Text("Drums").tag(StemChoice.drums)
+                                            Text("Bass").tag(StemChoice.bass)
+                                            Text("Vocals").tag(StemChoice.vocals)
+                                            Text("Other").tag(StemChoice.other)
+                                        }
+                                        .pickerStyle(.segmented)
+
+                                        HStack {
+                                            Text("Level")
+                                                .foregroundColor(.white)
+                                            Spacer()
+                                            Text("\(Int(stemLevel2 * 100))%")
+                                                .foregroundColor(.gray)
+                                        }
+
+                                        Slider(value: $stemLevel2, in: 0...1)
+                                            .disabled(selectedStem2 == .none)
+                                            .opacity(selectedStem2 == .none ? 0.4 : 1.0)
+                                    }
+
+                                    Button(action: {
+                                        applyPlaybackSettings()
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "checkmark.circle.fill")
+                                            Text("Confirm Playback Settings")
+                                                .fontWeight(.semibold)
+                                        }
                                         .foregroundColor(.white)
-                                    Spacer()
-                                    Text("\(Int(stemLevel2 * 100))%")
-                                        .foregroundColor(.gray)
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .background(currentSong == nil ? Color.gray : Color.blue)
+                                        .cornerRadius(14)
+                                    }
+                                    .disabled(currentSong == nil)
+                                    .opacity(currentSong == nil ? 0.5 : 1.0)
                                 }
-
-                                Slider(value: $stemLevel2, in: 0...1)
-                                    .disabled(selectedStem2 == .none)
-                                    .opacity(selectedStem2 == .none ? 0.4 : 1.0)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                             }
                         }
                         .padding()
                         .background(Color.white.opacity(0.08))
                         .cornerRadius(16)
                         
+
                         
                         
                         // MARK: - Now Playing Card
@@ -436,6 +478,29 @@ struct ContentView: View {
         return "\(song.title) • \(activeStemDisplayText)"
     }
     
+    func playNextSongInLibrary() {
+        guard let current = currentSong,
+              let currentIndex = librarySongs.firstIndex(where: { $0.id == current.id }) else {
+            isPlaying = false
+            songAdvanceTask?.cancel()
+            songAdvanceTask = nil
+            uploadStatus = "No current song"
+            return
+        }
+
+        let nextIndex = currentIndex + 1
+
+        guard nextIndex < librarySongs.count else {
+            isPlaying = false
+            songAdvanceTask?.cancel()
+            songAdvanceTask = nil
+            uploadStatus = "Reached end of library"
+            return
+        }
+
+        let nextSong = librarySongs[nextIndex]
+        startPlayback(song: nextSong)
+    }
     // MARK: - Actions
     
     // End-to-end demo flow:
@@ -447,8 +512,14 @@ struct ContentView: View {
     func startPlayback(song: Song) {
         lyricSendTask?.cancel()
         lyricSendTask = nil
+        songAdvanceTask?.cancel()
+        songAdvanceTask = nil
+        print("selectedStem1 at playback start:", selectedStem1)
+        print("selectedStem2 at playback start:", selectedStem2)
+        print("requestedStems at playback start:", requestedStems)
 
         let stemsToLoad = requestedStems
+        let stemsLabel = stemsToLoad.map { displayName(for: $0) }.joined(separator: " + ")
 
         Task {
             await MainActor.run {
@@ -456,7 +527,8 @@ struct ContentView: View {
                 isPlaying = false
                 currentLyricChunks = []
                 currentLyricChunkIndex = 0
-                uploadStatus = "Loading \(activeStemDisplayText) for \(song.title)..."
+                currentSongDuration = nil
+                uploadStatus = "Loading \(stemsLabel) for \(song.title)..."
             }
 
             do {
@@ -468,11 +540,17 @@ struct ContentView: View {
                     print("Stem file ready for \(displayName(for: stem)):", url)
                 }
 
-                // Use first stem for duration if needed
                 let primaryStem = stemsToLoad[0]
-                let duration = await getAudioDuration(from: stemURLs[primaryStem]!)
+
+                let duration: Double?
+                if let serverDuration = song.durationSec {
+                    duration = serverDuration
+                } else {
+                    duration = await getAudioDuration(from: stemURLs[primaryStem]!)
+                }
 
                 await MainActor.run {
+                    currentSongDuration = duration
                     uploadStatus = "Fetching lyrics for \(song.title)..."
                 }
 
@@ -488,12 +566,29 @@ struct ContentView: View {
                     currentLyricChunks = lyricChunks
                     currentLyricChunkIndex = 0
                     isPlaying = true
-                    uploadStatus = "Now playing \(song.title) • \(activeStemDisplayText)"
+                    uploadStatus = "Now playing \(song.title) • \(stemsLabel)"
                 }
 
                 if bleManager.isConnected {
                     bleManager.sendCommand("PLAY")
                     startLyricSendingLoop(songDurationSec: duration)
+
+                    if let duration, duration > 0 {
+                        songAdvanceTask = Task {
+                            do {
+                                try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                            } catch {
+                                return
+                            }
+
+                            if Task.isCancelled { return }
+
+                            await MainActor.run {
+                                guard isPlaying, currentSong?.id == song.id else { return }
+                                playNextSongInLibrary()
+                            }
+                        }
+                    }
                 } else {
                     await MainActor.run {
                         uploadStatus = "Stems ready, but BLE is not connected"
@@ -509,17 +604,36 @@ struct ContentView: View {
         }
     }
     
+    func applyPlaybackSettings() {
+        print("Applying settings:")
+        print("Stem 1:", selectedStem1)
+        print("Stem 2:", selectedStem2)
+        print("Requested stems:", requestedStems)
+        
+        guard let song = currentSong else {
+            uploadStatus = "Select a song first"
+            return
+        }
+
+        uploadStatus = "Applying new playback settings..."
+        startPlayback(song: song)
+    }
+    
     func togglePlaybackFromHome() {
         guard canControlPlayback else { return }
-        
+
         isPlaying.toggle()
         bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
-        
+
         if isPlaying {
             uploadStatus = "Resumed \(currentSong?.title ?? "song")"
-            startLyricSendingLoop(songDurationSec: nil)
+            startLyricSendingLoop(songDurationSec: currentSongDuration)
         } else {
             uploadStatus = "Paused \(currentSong?.title ?? "song")"
+            lyricSendTask?.cancel()
+            lyricSendTask = nil
+            songAdvanceTask?.cancel()
+            songAdvanceTask = nil
         }
     }
     
@@ -567,6 +681,7 @@ struct ContentView: View {
 
         Task {
             do {
+                /*
                 if let parsed = parseSongAndArtist(from: url.lastPathComponent) {
                     let exists = try await api.checkSongExists(
                         songTitle: parsed.song,
@@ -588,6 +703,7 @@ struct ContentView: View {
                         return
                     }
                 }
+                 */
 
                 await MainActor.run {
                     uploadStatus = "Uploading and processing... this may take several minutes"
@@ -770,9 +886,13 @@ struct ContentView: View {
 
                 if self.isPlaying {
                     self.uploadStatus = "Resumed from glasses control"
-                    self.startLyricSendingLoop(songDurationSec: nil)
+                    self.startLyricSendingLoop(songDurationSec: self.currentSongDuration)
                 } else {
                     self.uploadStatus = "Paused from glasses control"
+                    self.lyricSendTask?.cancel()
+                    self.lyricSendTask = nil
+                    self.songAdvanceTask?.cancel()
+                    self.songAdvanceTask = nil
                 }
             }
             return
