@@ -43,6 +43,11 @@ struct ContentView: View {
     // Prevent handling the same incoming BLE notification repeatedly
     @State private var lastHandledBLEMessage: String = ""
     
+    @State private var lastAppliedPlaybackSettings: PlaybackSettingsRequest? = nil
+    
+    @State private var backPressCount: Int = 0
+    @State private var backPressResetTask: Task<Void, Never>? = nil
+    
     var activeStem1: StemType {
         selectedStem1
     }
@@ -187,7 +192,7 @@ struct ContentView: View {
                                         .foregroundColor(.white)
                                         .frame(maxWidth: .infinity)
                                         .padding()
-                                        .background(currentSong == nil ? Color.gray : Color.blue)
+                                        .background(currentSong == nil ? Color.gray : Color(red: 217/255, green: 122/255, blue: 60/255))
                                         .cornerRadius(14)
                                     }
                                     .disabled(currentSong == nil)
@@ -604,6 +609,64 @@ struct ContentView: View {
         }
     }
     
+    func restartCurrentSong() {
+        guard let song = currentSong else {
+            uploadStatus = "No current song to restart"
+            return
+        }
+
+        uploadStatus = "Restarting \(song.title)"
+        startPlayback(song: song)
+    }
+    
+    func playPreviousSongInLibrary() {
+        guard let current = currentSong,
+              let currentIndex = librarySongs.firstIndex(where: { $0.id == current.id }) else {
+            uploadStatus = "No current song"
+            return
+        }
+
+        guard currentIndex > 0 else {
+            restartCurrentSong()
+            return
+        }
+
+        let previousSong = librarySongs[currentIndex - 1]
+        startPlayback(song: previousSong)
+    }
+    
+    func handleBackButtonPressed() {
+        guard currentSong != nil else {
+            uploadStatus = "No current song"
+            return
+        }
+
+        backPressCount += 1
+        print("Back button pressed. Count =", backPressCount)
+
+        if backPressCount == 1 {
+            restartCurrentSong()
+        } else if backPressCount >= 2 {
+            backPressResetTask?.cancel()
+            backPressResetTask = nil
+            backPressCount = 0
+            playPreviousSongInLibrary()
+            return
+        }
+
+        backPressResetTask?.cancel()
+        backPressResetTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second window
+
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                self.backPressCount = 0
+                self.backPressResetTask = nil
+            }
+        }
+    }
+    /*
     func applyPlaybackSettings() {
         print("Applying settings:")
         print("Stem 1:", selectedStem1)
@@ -617,6 +680,64 @@ struct ContentView: View {
 
         uploadStatus = "Applying new playback settings..."
         startPlayback(song: song)
+    }
+     */
+    
+    func applyPlaybackSettings() {
+        guard let song = currentSong else {
+            uploadStatus = "Select a song first"
+            print("No current song - cannot apply playback settings")
+            return
+        }
+
+        let stems = buildPlaybackStemEntries()
+        let payload = PlaybackSettingsRequest(song: song.title, stems: stems)
+
+        lastAppliedPlaybackSettings = payload
+
+        print("Applying playback settings for:", song.title)
+        for entry in stems {
+            print("- \(entry.name): \(entry.intensity)%")
+        }
+
+        do {
+            let encoded = try JSONEncoder().encode(payload)
+            if let jsonString = String(data: encoded, encoding: .utf8) {
+                print("Prepared playback settings JSON:")
+                print(jsonString)
+            }
+        } catch {
+            print("Failed to encode playback settings:", error.localizedDescription)
+        }
+
+        uploadStatus = "Playback settings saved for \(song.title)"
+
+        // Optional: restart playback immediately so the new stem choices apply in-app
+        startPlayback(song: song)
+    }
+    
+    func buildPlaybackStemEntries() -> [StemMixEntry] {
+        var stems: [StemMixEntry] = []
+
+        let stem1Percent = Int((stemLevel1 * 100).rounded())
+        stems.append(
+            StemMixEntry(
+                name: selectedStem1.rawValue,
+                intensity: stem1Percent
+            )
+        )
+
+        if let stem2 = selectedStem2.asStemType, stem2 != selectedStem1 {
+            let stem2Percent = Int((stemLevel2 * 100).rounded())
+            stems.append(
+                StemMixEntry(
+                    name: stem2.rawValue,
+                    intensity: stem2Percent
+                )
+            )
+        }
+
+        return stems
     }
     
     func togglePlaybackFromHome() {
@@ -874,31 +995,59 @@ struct ContentView: View {
 
         print("Handling incoming BLE message:", cleanMessage)
 
-        // Always allow repeated button presses
-        if cleanMessage == "PLAYPAUSE_PRESSED" || cleanMessage.starts(with: "BUTTON_PRESSED") {
+        if cleanMessage == "PAUSE" {
             guard canControlPlayback else { return }
 
             DispatchQueue.main.async {
-                self.isPlaying.toggle()
-                let cmd = self.isPlaying ? "PLAY" : "PAUSE"
-                print("Sending command to ESP32:", cmd)
-                self.bleManager.sendCommand(cmd)
+                guard self.isPlaying else { return }
 
-                if self.isPlaying {
-                    self.uploadStatus = "Resumed from glasses control"
-                    self.startLyricSendingLoop(songDurationSec: self.currentSongDuration)
-                } else {
-                    self.uploadStatus = "Paused from glasses control"
-                    self.lyricSendTask?.cancel()
-                    self.lyricSendTask = nil
-                    self.songAdvanceTask?.cancel()
-                    self.songAdvanceTask = nil
-                }
+                self.isPlaying = false
+                self.uploadStatus = "Paused from touch control"
+                self.lyricSendTask?.cancel()
+                self.lyricSendTask = nil
+                self.songAdvanceTask?.cancel()
+                self.songAdvanceTask = nil
             }
             return
         }
 
-        // Keep dedupe for other BLE messages
+        if cleanMessage == "PLAY" {
+            guard canControlPlayback else { return }
+
+            DispatchQueue.main.async {
+                guard !self.isPlaying else { return }
+
+                self.isPlaying = true
+                self.uploadStatus = "Resumed from touch control"
+                self.startLyricSendingLoop(songDurationSec: self.currentSongDuration)
+            }
+            return
+        }
+
+        if cleanMessage == "SKIP_NEXT" {
+            guard canControlPlayback else { return }
+
+            DispatchQueue.main.async {
+                self.uploadStatus = "Skipping to next song"
+                self.playNextSongInLibrary()
+            }
+            return
+        }
+
+        if cleanMessage == "SKIP_PREV" {
+            guard canControlPlayback else { return }
+
+            DispatchQueue.main.async {
+                self.handleBackButtonPressed()
+            }
+            return
+        }
+
+        if cleanMessage == "TOUCH0_OFF" || cleanMessage == "TOUCH1_OFF" || cleanMessage == "TOUCH2_OFF" {
+            print("Ignoring touch OFF message:", cleanMessage)
+            return
+        }
+
         guard cleanMessage != lastHandledBLEMessage else { return }
         lastHandledBLEMessage = cleanMessage
     }

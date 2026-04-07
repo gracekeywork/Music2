@@ -22,6 +22,17 @@ enum StemType: String, CaseIterable, Hashable {
     case other
 }
 
+extension StemType {
+    var displayName: String {
+        switch self {
+        case .drums: return "Drums"
+        case .bass: return "Bass"
+        case .vocals: return "Vocals"
+        case .other: return "Other"
+        }
+    }
+}
+
 enum StemChoice: String, CaseIterable, Hashable {
     case none
     case drums
@@ -90,4 +101,14 @@ struct LyricLine: Identifiable, Codable {
         case timeMs
         case text
     }
+}
+
+struct StemMixEntry: Codable {
+    let name: String
+    let intensity: Int
+}
+
+struct PlaybackSettingsRequest: Codable {
+    let song: String
+    let stems: [StemMixEntry]
 }
