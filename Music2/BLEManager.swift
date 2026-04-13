@@ -245,8 +245,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     // - "LYRIC:some line of text"
     func sendCommand(_ command: String) {
         // Prevent crashes or silent weirdness if we try to send before BLE is ready
-        guard let peripheral = connectedPeripheral else {
-            print("sendCommand aborted - no connected peripheral")
+        guard let peripheral = connectedPeripheral,
+              let characteristic = targetCharacteristic else {
+            print("sendCommand aborted - BLE not ready")
             return
         }
         
@@ -269,6 +270,73 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         //peripheral.writeValue(data, for: characteristic, type: .withResponse)
         DispatchQueue.main.async {
             peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        }
+    }
+    
+    func sendAudioChunk(_ chunk: Data) {
+        guard let peripheral = connectedPeripheral else {
+            print("sendAudioChunk aborted - no connected peripheral")
+            return
+        }
+        
+        guard let characteristic = targetCharacteristic else {
+            print("sendAudioChunk aborted - no characteristic")
+            return
+        }
+        
+        let maxLength = peripheral.maximumWriteValueLength(for: .withoutResponse)
+        
+        guard chunk.count <= maxLength else {
+            print("sendAudioChunk aborted - chunk too large: \(chunk.count) bytes, max is \(maxLength)")
+            return
+        }
+        
+        if !peripheral.canSendWriteWithoutResponse {
+            print("Backpressure - retrying shortly")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                self.sendAudioChunk(chunk)
+            }
+            return
+        }
+        
+        print("Sending audio chunk, bytes: \(chunk.count)")
+        peripheral.writeValue(chunk, for: characteristic, type: .withoutResponse)
+    }
+    
+    func splitIntoChunks(_ data: Data, chunkSize: Int = 160) -> [Data] {
+        guard chunkSize > 0 else { return [] }
+
+        var chunks: [Data] = []
+        var start = 0
+
+        while start < data.count {
+            let end = min(start + chunkSize, data.count)
+            chunks.append(data.subdata(in: start..<end))
+            start = end
+        }
+
+        return chunks
+    }
+    
+    func debugSendStemAudioTimed(from fileURL: URL) {
+        do {
+            let pcmData = try AudioChunkLoader.loadPCM16MonoData(
+                from: fileURL,
+                targetSampleRate: 8_000
+            )
+            
+            let chunks = self.splitIntoChunks(pcmData, chunkSize: 160)
+            print("Prepared \(chunks.count) timed chunks")
+            
+            for (index, chunk) in chunks.enumerated() {
+                let delay = DispatchTime.now() + .milliseconds(index * 20)
+                DispatchQueue.main.asyncAfter(deadline: delay) {
+                    print("Timed chunk \(index + 1)/\(chunks.count)")
+                    self.sendAudioChunk(chunk)
+                }
+            }
+        } catch {
+            print("debugSendStemAudioTimed failed:", error.localizedDescription)
         }
     }
 }

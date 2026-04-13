@@ -48,6 +48,8 @@ struct ContentView: View {
     @State private var backPressCount: Int = 0
     @State private var backPressResetTask: Task<Void, Never>? = nil
     
+    
+    
     var activeStem1: StemType {
         selectedStem1
     }
@@ -561,11 +563,14 @@ struct ContentView: View {
 
                 let lyrics = try await api.fetchLyrics(songTitle: song.title)
 
+                /*
                 let lyricChunks = buildLyricChunks(
                     from: lyrics,
                     targetWordsPerChunk: 4,
                     maxCharactersPerChunk: 24
                 )
+                 */
+                let lyricChunks = lyrics
 
                 await MainActor.run {
                     currentLyricChunks = lyricChunks
@@ -865,6 +870,7 @@ struct ContentView: View {
         }
     }
     
+    /*
     func buildLyricChunks(
         from lines: [String],
         targetWordsPerChunk: Int = 4,
@@ -922,6 +928,7 @@ struct ContentView: View {
         
         return chunks
     }
+    */
     
     // Sends lyric lines to the ESP32 one at a time.
     // For tomorrow's demo we use a simple fixed delay instead of true timestamp sync.
@@ -973,12 +980,11 @@ struct ContentView: View {
             let cleanChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
             
             if !cleanChunk.isEmpty {
-                let message = "LYRIC:\(cleanChunk)"
-                print("Sending lyric chunk \(currentLyricChunkIndex + 1)/\(currentLyricChunks.count):", message)
-                bleManager.sendCommand(message)
+                print("Sending lyric line \(currentLyricChunkIndex + 1)/\(currentLyricChunks.count):", cleanChunk)
+                bleManager.sendCommand(cleanChunk)
                 
                 await MainActor.run {
-                    uploadStatus = "Sending lyric \(currentLyricChunkIndex + 1)/\(currentLyricChunks.count): \(cleanChunk)"
+                    uploadStatus = "Sending lyric: \(cleanChunk)"
                 }
             }
             

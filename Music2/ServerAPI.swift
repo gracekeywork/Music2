@@ -20,7 +20,7 @@ final class ServerAPI {
     //let baseURL = URL(string: "http://192.168.68.57:8000")!
     //192.168.68.57
     
-    let baseURL = URL(string: "http://10.4.87.88:8000")!
+    let baseURL = URL(string: "http://10.4.54.204:8000")!
 
     //let baseURL = URL(string: "http://10.4.69.53:8000")!
 
