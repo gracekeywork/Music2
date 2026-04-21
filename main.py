@@ -48,14 +48,6 @@ async def upload_song(file: UploadFile):
     #new_song = Song(song_name, artist_name, song_name + ' - ' + artist_name )
     new_song = Song(song_name, artist_name, song_name+' - '+artist_name)
 
-    # 2. CHECK IF SONG ALREADY EXISTS IN MEMORY
-    existing_song = None
-    for song in song_list:
-        if song.name == new_song.name:
-            existing_song = song
-            break
-
-    # 3. CHECK IF PROCESSED FILES ALREADY EXIST ON DISK
     song_dir = new_song.name
     synced_lyrics_path = os.path.join(song_dir, f"{new_song.name}_synced_lyrics.txt")
     vocals_path = os.path.join(song_dir, f"{new_song.name} - {new_song.artist}_vocals.wav")
@@ -73,26 +65,17 @@ async def upload_song(file: UploadFile):
     )
 
     if already_processed:
-        print(f"Duplicate upload detected for '{new_song.name}'. Skipping processing.")
-
-        if existing_song is None:
-            existing_song = new_song
-            existing_song.lyric_file = synced_lyrics_path
-            song_list.append(existing_song)
-        else:
-            existing_song.lyric_file = synced_lyrics_path
-
+        new_song.lyric_file = synced_lyrics_path
+        if not any(s.name == new_song.name for s in song_list):
+            song_list.append(new_song)
         return {
             "status": "already_exists",
             "message": f"{new_song.name} already processed. Reusing existing files."
         }
 
-    # 4. ONLY ADD TO SONG LIST IF IT IS NOT ALREADY THERE
-    if existing_song is None:
-        song_list.append(new_song)
-        target_song = new_song
-    else:
-        target_song = existing_song
+    # otherwise this is a fresh rebuild
+    song_list.append(new_song)
+    target_song = new_song
 
     # 5. MAKE DIRECTORY
     os.makedirs(target_song.name, exist_ok=True)
