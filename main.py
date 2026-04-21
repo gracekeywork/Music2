@@ -34,29 +34,70 @@ current_id = 0
 def root():
     return {".WAV storage container"}
 
+
 @main.post("/uploadfile/")
 async def upload_song(file: UploadFile):
 
-    # 1. SET ARTIST AND SONG NAME OF FILE (ex. song_name - artist_name.wav)
+    # 1. PARSE SONG NAME / ARTIST
     index = file.filename.find('-')
-    index2 = file.filename.find('.')
-    
-    # Using strip() to remove accidental trailing/leading spaces
+    index2 = file.filename.rfind('.')
+
     song_name = file.filename[:index-1].strip()
     artist_name = file.filename[index+2:index2].strip()
+
+    #new_song = Song(song_name, artist_name, song_name + ' - ' + artist_name )
     new_song = Song(song_name, artist_name, song_name+' - '+artist_name)
 
-    # ADD NEW SONG TO LIST IF IT DOES NOT EXIST
+    # 2. CHECK IF SONG ALREADY EXISTS IN MEMORY
+    existing_song = None
     for song in song_list:
         if song.name == new_song.name:
-            pass
-        
-    song_list.append(new_song)
-    
-    # Make directory for the song
-    os.makedirs(new_song.name, exist_ok=True)
+            existing_song = song
+            break
 
-    # Save the uploaded file locally
+    # 3. CHECK IF PROCESSED FILES ALREADY EXIST ON DISK
+    song_dir = new_song.name
+    synced_lyrics_path = os.path.join(song_dir, f"{new_song.name}_synced_lyrics.txt")
+    vocals_path = os.path.join(song_dir, f"{new_song.name} - {new_song.artist}_vocals.wav")
+    drums_path = os.path.join(song_dir, f"{new_song.name} - {new_song.artist}_drums.wav")
+    bass_path = os.path.join(song_dir, f"{new_song.name} - {new_song.artist}_bass.wav")
+    guitar_path = os.path.join(song_dir, f"{new_song.name} - {new_song.artist}_guitar.wav")
+
+    already_processed = (
+        os.path.exists(song_dir) and
+        os.path.exists(synced_lyrics_path) and
+        os.path.exists(vocals_path) and
+        os.path.exists(drums_path) and
+        os.path.exists(bass_path) and
+        os.path.exists(guitar_path)
+    )
+
+    if already_processed:
+        print(f"Duplicate upload detected for '{new_song.name}'. Skipping processing.")
+
+        if existing_song is None:
+            existing_song = new_song
+            existing_song.lyric_file = synced_lyrics_path
+            song_list.append(existing_song)
+        else:
+            existing_song.lyric_file = synced_lyrics_path
+
+        return {
+            "status": "already_exists",
+            "message": f"{new_song.name} already processed. Reusing existing files."
+        }
+
+    # 4. ONLY ADD TO SONG LIST IF IT IS NOT ALREADY THERE
+    if existing_song is None:
+        song_list.append(new_song)
+        target_song = new_song
+    else:
+        target_song = existing_song
+
+    # 5. MAKE DIRECTORY
+    os.makedirs(target_song.name, exist_ok=True)
+
+    # 6. SAVE UPLOADED FILE LOCALLY ONLY IF WE NEED TO PROCESS
     with open(file.filename, "wb") as f:
         contents = await file.read()
         f.write(contents)
@@ -65,69 +106,60 @@ async def upload_song(file: UploadFile):
     # --- AUTOMATED AUDIO PROCESSING PIPELINE ---
     # ==========================================
 
-    # 2. SEPARATE AUDIO STEMS
-    # Ensure separate_song outputs standard files like "Song - Artist_(Vocals|Drums).wav"
-    separate_song(new_song.filename)
-    
-    # Predict the name of the extracted vocals file based on your demucs output
-    vocals_file = f"{new_song.name} - {new_song.artist}_vocals.wav" # adjust capitalization if needed
+    separate_song(target_song.filename)
 
-    # 3. EXTRACT LYRICS VIA WHISPER (Base, Small, Medium)
-    base_file = f"{new_song.name}_base.txt"
-    small_file = f"{new_song.name}_small.txt"
-    medium_file = f"{new_song.name}_medium.txt"
+    vocals_file = f"{target_song.name} - {target_song.artist}_vocals.wav"
+
+    base_file = f"{target_song.name}_base.txt"
+    small_file = f"{target_song.name}_small.txt"
+    medium_file = f"{target_song.name}_medium.txt"
 
     lyric_extract(vocals_file, base_file, "base")
     lyric_extract(vocals_file, small_file, "small")
     lyric_extract(vocals_file, medium_file, "medium")
 
-    # 4. COMPILE LYRICS
-    # lyric_compile uses the songname prefix to locate the 3 text files
-    lyric_compile(new_song.name)
-    finalized_lyrics = f"{new_song.name}_lyrics_finalized.txt"
+    lyric_compile(target_song.name)
+    finalized_lyrics = f"{target_song.name}_lyrics_finalized.txt"
 
-    # 5. SYNC LYRICS WITH FREQUENCY DATA
     vocal_data = Frequency_data(vocals_file)
     fill_data(vocal_data)
     estimate_chunks(vocal_data)
-    lyric_sync(vocal_data, finalized_lyrics)
+    timestamp_file = lyric_sync(vocal_data, finalized_lyrics)
 
-    # 6. MAKE .PCM FILES FOR EACH INSTRUMENT
-    convert_to_pcm(f"{new_song.filename}_vocals.wav", "vocals")
-    convert_to_pcm(f"{new_song.filename}_drums.wav", "drums")
-    convert_to_pcm(f"{new_song.filename}_bass.wav", "bass")
-    convert_to_pcm(f"{new_song.filename}_guitar.wav", "guitar")
+    convert_to_pcm(f"{target_song.name} - {target_song.artist}_vocals.wav", "vocals")
+    convert_to_pcm(f"{target_song.name} - {target_song.artist}_drums.wav", "drums")
+    convert_to_pcm(f"{target_song.name} - {target_song.artist}_bass.wav", "bass")
+    convert_to_pcm(f"{target_song.name} - {target_song.artist}_guitar.wav", "guitar")
 
-    # ==========================================
-    # --- FILE CLEANUP AND ORGANIZATION ---
-    # ==========================================
-
-    # Move all intermediate and final files into the song's directory
     files_to_move = [
-        new_song.filename,
+        target_song.filename,
         vocals_file,
-        f"{new_song.name} - {new_song.artist}_drums.wav",
-        f"{new_song.name} - {new_song.artist}_bass.wav",
-        f"{new_song.name} - {new_song.artist}_guitar.wav",
+        f"{target_song.name} - {target_song.artist}_drums.wav",
+        f"{target_song.name} - {target_song.artist}_bass.wav",
+        f"{target_song.name} - {target_song.artist}_guitar.wav",
         base_file,
         small_file,
         medium_file,
-        finalized_lyrics,
-        "lyrics_with_timestamps_"+new_song.name+".txt"
+        finalized_lyrics
     ]
 
     for f_name in files_to_move:
         if os.path.exists(f_name):
-            # If moving the hardcoded timestamp file, rename it to match the song
-            if f_name == "lyrics_with_timestamps_.txt":
-                destination = os.path.join(new_song.name, f"{new_song.name}_synced_lyrics.txt")
-                shutil.move(f_name, destination)
-                new_song.lyric_file = destination
-            else:
-                shutil.move(f_name, os.path.join(new_song.name, f_name))
+            shutil.move(f_name, os.path.join(target_song.name, os.path.basename(f_name)))
 
-    print(f"Pipeline complete. Synced lyrics saved to: {new_song.lyric_file}")
-    return True
+    if os.path.exists(timestamp_file):
+        destination = os.path.join(target_song.name, f"{target_song.name}_synced_lyrics.txt")
+        shutil.move(timestamp_file, destination)
+        target_song.lyric_file = destination
+    else:
+        print(f"Timestamp file missing: {timestamp_file}")
+
+    print(f"Pipeline complete. Synced lyrics saved to: {target_song.lyric_file}")
+
+    return {
+        "status": "processed",
+        "message": f"{target_song.name} uploaded and processed successfully."
+    }
 
 @main.get("/requests/{song_title}/{instrument_type}")
 async def return_song(song_title: str, instrument_type: str):

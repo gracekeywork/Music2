@@ -533,9 +533,14 @@ def lyric_sync(data_object, lyric_file):
             i += 1
     
 
-    with open(f"{data_object.filepath}_timestamps.txt", "w") as f:
-            for line in synced_file:
-                f.write(line)
+        output_file = f"{data_object.filepath}_timestamps.txt"
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        for line in synced_file:
+            f.write(line.strip() + "\n")
+
+    print(f"Timestamped lyrics written to: {output_file}")
+    return output_file
 
 #lyric_sync(idontloveyou_vocals_data, "I Don't Love You/I Don't Love You_lyrics_finalized.txt")
 #lyric_sync(strutter_vocals_data, "Strutter_lyrics_finalized.txt")
