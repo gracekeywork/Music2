@@ -20,7 +20,7 @@ final class ServerAPI {
     //let baseURL = URL(string: "http://192.168.68.57:8000")!
     //192.168.68.57
     
-    let baseURL = URL(string: "http://10.4.54.204:8000")!
+    let baseURL = URL(string: "http://10.4.118.118:8000")!
 
     //let baseURL = URL(string: "http://10.4.69.53:8000")!
 
@@ -35,11 +35,15 @@ final class ServerAPI {
     //   "artist": "My Artist"
     // }
     struct UploadResponse: Codable {
-        let success: Bool
+        let status: String?
         let message: String?
         let song_name: String?
         let artist: String?
         let error: String?
+
+        var success: Bool {
+            status == "processed" || status == "already_exists"
+        }
     }
     
     struct SongExistsResponse: Codable {
@@ -176,12 +180,29 @@ final class ServerAPI {
 
         if let responseText = String(data: data, encoding: .utf8) {
             print("Upload response text:", responseText)
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode(UploadResponse.self, from: data)
+
+            if decoded.success {
+                return decoded
+            }
+
+            throw NSError(
+                domain: "ServerAPI",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: decoded.error ?? decoded.message ?? "Upload failed"]
+            )
+        } catch {
+            let responseText = String(data: data, encoding: .utf8) ?? ""
 
             let cleaned = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
 
+            // fallback so old server responses still work
             if cleaned == "true" || cleaned == "True" {
                 return UploadResponse(
-                    success: true,
+                    status: "processed",
                     message: "Upload and processing complete",
                     song_name: nil,
                     artist: nil,
@@ -191,21 +212,20 @@ final class ServerAPI {
 
             if cleaned.contains("Song already exists") {
                 return UploadResponse(
-                    success: true,
+                    status: "already_exists",
                     message: "Song already exists",
                     song_name: nil,
                     artist: nil,
                     error: nil
                 )
             }
+
+            throw NSError(
+                domain: "ServerAPI",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unexpected upload response from server: \(responseText)"]
+            )
         }
-
-        throw NSError(
-            domain: "ServerAPI",
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "Unexpected upload response from server"]
-        )
-
     }
 
     // ── LIBRARY ───────────────────────────────────────────────────────────────
@@ -400,6 +420,16 @@ final class ServerAPI {
         }
 
         let text = String(data: data, encoding: .utf8) ?? ""
+        print("Raw lyrics response:")
+        print(text)
+
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == "Lyrics DNE" {
+            throw NSError(
+                domain: "ServerAPI",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Server says lyrics file is missing"]
+            )
+        }
 
         let lines = text
             .components(separatedBy: .newlines)
@@ -407,7 +437,58 @@ final class ServerAPI {
             .filter { !$0.isEmpty }
 
         print("Fetched lyric lines:", lines.count)
-
         return lines
+    }
+    
+    private func splitIntoPackets(_ data: Data, packetSize: Int) -> [Data] {
+        guard packetSize > 0 else { return [] }
+        
+        var packets: [Data] = []
+        var offset = 0
+        
+        while offset < data.count {
+            let end = min(offset + packetSize, data.count)
+            let packet = data.subdata(in: offset..<end)
+            packets.append(packet)
+            offset = end
+        }
+        
+        return packets
+    }
+    
+    func fetchPacketizedAudio(
+        songTitle: String,
+        stems: [StemType]
+    ) async throws -> [Data] {
+        
+        // Build stem query string like: drums,bass
+        let stemString = stems.map { $0.rawValue }.joined(separator: ",")
+        
+        // Example endpoint — adjust if Lucas uses something different
+        let urlString = "\(baseURL)/packets/\(songTitle)?stems=\(stemString)"
+        
+        guard let url = URL(string: urlString) else {
+            throw URLError(.badURL)
+        }
+        
+        print("Fetching packetized audio from:", url)
+        
+        let (data, response) = try await URLSession.shared.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        print("Received packet data size:", data.count, "bytes")
+        
+        //  IMPORTANT: must match server packet size
+        let packetSize = 512
+        
+        let packets = splitIntoPackets(data, packetSize: packetSize)
+        
+        print("Total packets:", packets.count)
+        
+        return packets
     }
 }

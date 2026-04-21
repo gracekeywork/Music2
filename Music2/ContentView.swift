@@ -9,6 +9,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AVFoundation
 
+extension Color {
+    static let ravenBlack = Color(red: 28/255, green: 18/255, blue: 8/255)       // #1C1208
+    static let darkChestnut = Color(red: 92/255, green: 42/255, blue: 14/255)    // #5C2A0E
+    static let burntSienna = Color(red: 160/255, green: 68/255, blue: 15/255)    // #A0440F
+    static let copperRust = Color(red: 196/255, green: 98/255, blue: 26/255)     // #C4621A
+    static let warmAmber = Color(red: 217/255, green: 139/255, blue: 46/255)     // #D98B2E
+    static let goldenBuff = Color(red: 232/255, green: 181/255, blue: 90/255)    // #E8B55A
+    static let paleOchre = Color(red: 232/255, green: 201/255, blue: 138/255)    // #E8C98A
+    static let birchCream = Color(red: 242/255, green: 229/255, blue: 196/255)   // #F2E5C4
+}
+
 struct ContentView: View {
     
     @EnvironmentObject var bleManager: BLEManager
@@ -48,6 +59,12 @@ struct ContentView: View {
     @State private var backPressCount: Int = 0
     @State private var backPressResetTask: Task<Void, Never>? = nil
     
+    @State private var currentAudioPackets: [Data] = []
+    @State private var currentPacketIndex: Int = 0
+    @State private var audioPacketSendTask: Task<Void, Never>? = nil
+    
+    @State private var lyricPlaybackStartTime: Date? = nil
+    
     
     
     var activeStem1: StemType {
@@ -77,7 +94,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                Color.ravenBlack.ignoresSafeArea()
                 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -88,11 +105,11 @@ struct ContentView: View {
                                 Text("Music2")
                                     .font(.largeTitle)
                                     .fontWeight(.bold)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.burntSienna)
                                 
                                 Text("Haptic music experience")
                                     .font(.subheadline)
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.paleOchre)
                             }
                             
                             Spacer()
@@ -104,11 +121,11 @@ struct ContentView: View {
                                 
                                 Text(bleManager.isConnected ? "Connected" : "Scanning...")
                                     .font(.caption)
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.birchCream)
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
-                            .background(Color.white.opacity(0.08))
+                            .background(Color.darkChestnut.opacity(0.9))
                             .cornerRadius(12)
                         }
                     
@@ -155,6 +172,7 @@ struct ContentView: View {
                                         }
 
                                         Slider(value: $stemLevel1, in: 0...1)
+                                            .tint(.warmAmber)
                                     }
 
                                     VStack(alignment: .leading, spacing: 8) {
@@ -181,6 +199,7 @@ struct ContentView: View {
                                         Slider(value: $stemLevel2, in: 0...1)
                                             .disabled(selectedStem2 == .none)
                                             .opacity(selectedStem2 == .none ? 0.4 : 1.0)
+                                            .tint(.warmAmber)
                                     }
 
                                     Button(action: {
@@ -194,7 +213,7 @@ struct ContentView: View {
                                         .foregroundColor(.white)
                                         .frame(maxWidth: .infinity)
                                         .padding()
-                                        .background(currentSong == nil ? Color.gray : Color(red: 217/255, green: 122/255, blue: 60/255))
+                                        .background(currentSong == nil ? Color.darkChestnut : Color.copperRust)
                                         .cornerRadius(14)
                                     }
                                     .disabled(currentSong == nil)
@@ -204,7 +223,7 @@ struct ContentView: View {
                             }
                         }
                         .padding()
-                        .background(Color.white.opacity(0.08))
+                        .background(Color.burntSienna.opacity(0.30))
                         .cornerRadius(16)
                         
 
@@ -260,7 +279,7 @@ struct ContentView: View {
                                 }
                             }
                             .padding()
-                            .background(Color.white.opacity(0.08))
+                            .background(Color.darkChestnut.opacity(0.85))
                             .cornerRadius(20)
                         }
                         
@@ -269,7 +288,7 @@ struct ContentView: View {
                             Text("Library")
                                 .font(.title2)
                                 .fontWeight(.bold)
-                                .foregroundColor(.white)
+                                .foregroundColor(.paleOchre)
                             
                             Spacer()
                             
@@ -289,6 +308,8 @@ struct ContentView: View {
                             }
                         }
                         
+                        
+                
                         // MARK: - Upload Button
                         Button(action: {
                             showFilePicker = true
@@ -298,10 +319,10 @@ struct ContentView: View {
                                 Text("Upload WAV to Library")
                                     .fontWeight(.semibold)
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(.ravenBlack)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.orange)
+                            .background(Color.warmAmber)
                             .cornerRadius(14)
                         }
                         .fileImporter(
@@ -317,11 +338,11 @@ struct ContentView: View {
                         // MARK: - Upload / Debug Status
                         if !uploadStatus.isEmpty {
                             Text(uploadStatus)
-                                .foregroundColor(.white)
+                                .foregroundColor(.birchCream)
                                 .font(.subheadline)
                                 .padding()
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.white.opacity(0.08))
+                                .background(Color.darkChestnut.opacity(0.9))
                                 .cornerRadius(12)
                         }
                         
@@ -343,7 +364,7 @@ struct ContentView: View {
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.white.opacity(0.06))
+                            .background(Color.darkChestnut.opacity(0.85))
                             .cornerRadius(16)
                         } else {
                             VStack(spacing: 12) {
@@ -353,11 +374,11 @@ struct ContentView: View {
                                     } label: {
                                         HStack(spacing: 14) {
                                             RoundedRectangle(cornerRadius: 12)
-                                                .fill(Color.white.opacity(0.12))
+                                                .fill(Color.burntSienna.opacity(0.45))
                                                 .frame(width: 56, height: 56)
                                                 .overlay(
                                                     Image(systemName: "music.note")
-                                                        .foregroundColor(.white)
+                                                        .foregroundColor(.paleOchre)
                                                 )
 
                                             VStack(alignment: .leading, spacing: 4) {
@@ -392,8 +413,8 @@ struct ContentView: View {
                                         .padding()
                                         .background(
                                             currentSong?.id == song.id
-                                            ? Color.green.opacity(0.16)
-                                            : Color.white.opacity(0.06)
+                                            ? Color.warmAmber.opacity(0.22)
+                                            : Color.darkChestnut.opacity(0.82)
                                         )
                                         .cornerRadius(16)
                                     }
@@ -449,14 +470,14 @@ struct ContentView: View {
     }
     
     var homePlayButtonColor: Color {
-        if !canControlPlayback { return .gray }
-        return isPlaying ? .purple : .green
+        if !canControlPlayback { return .darkChestnut }
+        return isPlaying ? .copperRust : .warmAmber
     }
     
     var nowPlayingGradient: LinearGradient {
         if isPlaying {
             return LinearGradient(
-                colors: [Color.purple.opacity(0.85), Color.blue.opacity(0.85)],
+                colors: [Color.purple.opacity(0.85), Color.copperRust.opacity(0.85)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -508,6 +529,62 @@ struct ContentView: View {
         let nextSong = librarySongs[nextIndex]
         startPlayback(song: nextSong)
     }
+    
+    func parseTimedLyricLines(from lines: [String]) -> [TimedLyricLine] {
+        var timedLines: [TimedLyricLine] = []
+
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            // Normal timestamped line
+            if line.hasPrefix("["),
+               let closingBracketIndex = line.firstIndex(of: "]") {
+
+                let timeString = String(line[line.index(after: line.startIndex)..<closingBracketIndex])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                let lyricText = String(line[line.index(after: closingBracketIndex)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !lyricText.isEmpty else { continue }
+
+                let timeSec: Double?
+
+                if timeString.contains(":") {
+                    let parts = timeString.split(separator: ":").map(String.init)
+                    if parts.count == 2,
+                       let minutes = Double(parts[0]),
+                       let seconds = Double(parts[1]) {
+                        timeSec = minutes * 60 + seconds
+                    } else {
+                        timeSec = nil
+                    }
+                } else {
+                    timeSec = Double(timeString)
+                }
+
+                guard let parsedTime = timeSec else { continue }
+
+                timedLines.append(TimedLyricLine(timeSec: parsedTime, text: lyricText))
+            } else {
+                // Continuation line with no timestamp:
+                // attach it to the previous lyric instead of dropping it
+                guard !timedLines.isEmpty else { continue }
+
+                let continuation = line.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                guard !continuation.isEmpty else { continue }
+
+                let last = timedLines.removeLast()
+                let mergedText = last.text + ", " + continuation
+                timedLines.append(TimedLyricLine(timeSec: last.timeSec, text: mergedText))
+
+                print("Merged untimestamped continuation into previous lyric:", mergedText)
+            }
+        }
+
+        return timedLines.sorted { $0.timeSec < $1.timeSec }
+    }
     // MARK: - Actions
     
     // End-to-end demo flow:
@@ -521,6 +598,8 @@ struct ContentView: View {
         lyricSendTask = nil
         songAdvanceTask?.cancel()
         songAdvanceTask = nil
+        audioPacketSendTask?.cancel()
+        audioPacketSendTask = nil
         print("selectedStem1 at playback start:", selectedStem1)
         print("selectedStem2 at playback start:", selectedStem2)
         print("requestedStems at playback start:", requestedStems)
@@ -534,8 +613,12 @@ struct ContentView: View {
                 isPlaying = false
                 currentLyricChunks = []
                 currentLyricChunkIndex = 0
+                currentAudioPackets = []
+               
+                currentPacketIndex = 0
                 currentSongDuration = nil
                 uploadStatus = "Loading \(stemsLabel) for \(song.title)..."
+                bleManager.audioBackpressureCount = 0
             }
 
             do {
@@ -562,12 +645,41 @@ struct ContentView: View {
                 }
 
                 let lyrics = try await api.fetchLyrics(songTitle: song.title)
+                
+                // ── BUILD AUDIO PACKETS (NEW PIPELINE) ──
 
+                let monoSamplesList: [StemType: [Int16]] = try stemURLs.mapValues { url in
+                    try AudioChunkLoader.loadPCM16MonoSamples(from: url)
+                }
+
+                let stereoData: Data
+
+                if stemsToLoad.count == 1 {
+                    let mono = monoSamplesList[stemsToLoad[0]]!
+                    stereoData = AudioChunkLoader.makeStereoPCMDataDuplicatingMono(mono)
+                } else if stemsToLoad.count >= 2 {
+                    let leftSamples = monoSamplesList[stemsToLoad[0]]!
+                    let rightSamples = monoSamplesList[stemsToLoad[1]]!
+
+                    stereoData = AudioChunkLoader.makeStereoPCMData(
+                        left: leftSamples,
+                        right: rightSamples
+                    )
+                } else {
+                    throw NSError(
+                        domain: "Audio",
+                        code: 0,
+                        userInfo: [NSLocalizedDescriptionKey: "No stems loaded"]
+                    )
+                }
+
+                // Split into BLE packets (160 bytes = 5ms @ 8kHz stereo)
+                let audioPackets = AudioChunkLoader.splitIntoChunks(stereoData, chunkSize: 160)
+                
                 /*
-                let lyricChunks = buildLyricChunks(
-                    from: lyrics,
-                    targetWordsPerChunk: 4,
-                    maxCharactersPerChunk: 24
+                let audioPackets = try await api.fetchPacketizedAudio(
+                    songTitle: song.title,
+                    stems: stemsToLoad
                 )
                  */
                 let lyricChunks = lyrics
@@ -575,12 +687,18 @@ struct ContentView: View {
                 await MainActor.run {
                     currentLyricChunks = lyricChunks
                     currentLyricChunkIndex = 0
+                    currentAudioPackets = audioPackets
+                    currentPacketIndex = 0
                     isPlaying = true
                     uploadStatus = "Now playing \(song.title) • \(stemsLabel)"
                 }
 
+                await MainActor.run {
+                    lyricPlaybackStartTime = Date()
+                }
                 if bleManager.isConnected {
                     bleManager.sendCommand("PLAY")
+                    startAudioPacketSendingLoop(packetIntervalSec: 0.005)
                     startLyricSendingLoop(songDurationSec: duration)
 
                     if let duration, duration > 0 {
@@ -752,12 +870,23 @@ struct ContentView: View {
         bleManager.sendCommand(isPlaying ? "PLAY" : "PAUSE")
 
         if isPlaying {
+            if lyricPlaybackStartTime == nil {
+                lyricPlaybackStartTime = Date()
+            }
             uploadStatus = "Resumed \(currentSong?.title ?? "song")"
             startLyricSendingLoop(songDurationSec: currentSongDuration)
+
+            if !currentAudioPackets.isEmpty {
+                startAudioPacketSendingLoop(packetIntervalSec: 0.005)
+            }
         } else {
             uploadStatus = "Paused \(currentSong?.title ?? "song")"
             lyricSendTask?.cancel()
             lyricSendTask = nil
+
+            audioPacketSendTask?.cancel()
+            audioPacketSendTask = nil
+
             songAdvanceTask?.cancel()
             songAdvanceTask = nil
         }
@@ -940,6 +1069,129 @@ struct ContentView: View {
         }
     }
     
+    func startAudioPacketSendingLoop(packetIntervalSec: Double) {
+        audioPacketSendTask?.cancel()
+
+        audioPacketSendTask = Task {
+            await runAudioPacketSendingLoop(packetIntervalSec: packetIntervalSec)
+        }
+    }
+
+    func runAudioPacketSendingLoop(packetIntervalSec: Double) async {
+        guard !currentAudioPackets.isEmpty else {
+            await MainActor.run {
+                uploadStatus = "No audio packets to send"
+            }
+            return
+        }
+
+        print("Starting audio packet loop")
+        print("Total packets:", currentAudioPackets.count)
+        print("Packet interval:", packetIntervalSec, "seconds")
+
+        while true {
+            if Task.isCancelled { return }
+
+            if !isPlaying {
+                try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 sec
+                continue
+            }
+
+            if currentPacketIndex >= currentAudioPackets.count {
+                let backpressureCount = bleManager.audioBackpressureCount
+
+                print("BLE STABILITY | backpressure events during song: \(backpressureCount)")
+
+                await MainActor.run {
+                    if let song = currentSong {
+                        uploadStatus = "Audio complete for \(song.title) • backpressure events: \(backpressureCount)"
+                    } else {
+                        uploadStatus = "Audio complete • backpressure events: \(backpressureCount)"
+                    }
+                }
+                return
+            }
+
+            let packet = currentAudioPackets[currentPacketIndex]
+            bleManager.sendAudioPacket(packet)
+
+            let sentNumber = currentPacketIndex + 1
+            await MainActor.run {
+                uploadStatus = "Sending audio packet \(sentNumber)/\(currentAudioPackets.count)"
+            }
+
+            currentPacketIndex += 1
+
+            let delayNs = UInt64(packetIntervalSec * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delayNs)
+        }
+    }
+    
+    func runLyricSendingLoop(songDurationSec: Double?) async {
+        let timedLines = parseTimedLyricLines(from: currentLyricChunks)
+
+        guard !timedLines.isEmpty else {
+            await MainActor.run {
+                uploadStatus = "No timestamped lyric lines to send"
+            }
+            return
+        }
+
+        let playbackStart = lyricPlaybackStartTime ?? Date()
+
+        for (index, timedLine) in timedLines.enumerated() {
+            if Task.isCancelled { return }
+
+            while !isPlaying {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+
+            let elapsed = Date().timeIntervalSince(playbackStart)
+            let delayUntilLine = timedLine.timeSec - elapsed
+
+            if delayUntilLine > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delayUntilLine * 1_000_000_000))
+            }
+
+            if Task.isCancelled { return }
+
+            while !isPlaying {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+
+            print("Sending timed lyric line \(index + 1)/\(timedLines.count): [\(timedLine.timeSec)] \(timedLine.text)")
+            let actualElapsed = Date().timeIntervalSince(playbackStart)
+            let timingError = actualElapsed - timedLine.timeSec
+
+            print(
+                String(
+                    format: "LYRIC TIMING | target: %.3f s | actual: %.3f s | error: %.3f s | text: %@",
+                    timedLine.timeSec,
+                    actualElapsed,
+                    timingError,
+                    timedLine.text
+                )
+            )
+            bleManager.sendCommand("LYRIC:\(timedLine.text)")
+            print("SENDING TO ESP32:", "LYRIC:\(timedLine.text)")
+
+            await MainActor.run {
+                currentLyricChunkIndex = index + 1
+                uploadStatus = "Sending lyric: \(timedLine.text)"
+            }
+        }
+
+        await MainActor.run {
+            if let song = currentSong {
+                uploadStatus = "Lyric send complete for \(song.title) • \(activeStemDisplayText)"
+            } else {
+                uploadStatus = "Lyric send complete"
+            }
+        }
+    }
+    /*
     func runLyricSendingLoop(songDurationSec: Double?) async {
         guard !currentLyricChunks.isEmpty else {
             await MainActor.run {
@@ -994,6 +1246,7 @@ struct ContentView: View {
             try? await Task.sleep(nanoseconds: delayNs)
         }
     }
+    */
     
     func handleIncomingBLEMessage(_ message: String) {
         let cleanMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1009,8 +1262,13 @@ struct ContentView: View {
 
                 self.isPlaying = false
                 self.uploadStatus = "Paused from touch control"
+
                 self.lyricSendTask?.cancel()
                 self.lyricSendTask = nil
+
+                self.audioPacketSendTask?.cancel()
+                self.audioPacketSendTask = nil
+
                 self.songAdvanceTask?.cancel()
                 self.songAdvanceTask = nil
             }
@@ -1025,7 +1283,12 @@ struct ContentView: View {
 
                 self.isPlaying = true
                 self.uploadStatus = "Resumed from touch control"
+
                 self.startLyricSendingLoop(songDurationSec: self.currentSongDuration)
+
+                if !self.currentAudioPackets.isEmpty {
+                    self.startAudioPacketSendingLoop(packetIntervalSec: 0.005)
+                }
             }
             return
         }
@@ -1083,6 +1346,10 @@ struct ContentView: View {
         case .other: return "Other"
         }
     }
+}
+struct TimedLyricLine {
+    let timeSec: Double
+    let text: String
 }
 
 /*
