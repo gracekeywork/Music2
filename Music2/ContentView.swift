@@ -64,6 +64,8 @@ struct ContentView: View {
     @State private var audioPacketSendTask: Task<Void, Never>? = nil
     
     @State private var lyricPlaybackStartTime: Date? = nil
+    @State private var lyricElapsedBeforePause: Double = 0
+    @State private var songAdvanceElapsedBeforePause: Double = 0
     
     
     
@@ -677,9 +679,11 @@ struct ContentView: View {
                 currentLyricChunks = []
                 currentLyricChunkIndex = 0
                 currentAudioPackets = []
-               
                 currentPacketIndex = 0
                 currentSongDuration = nil
+                lyricElapsedBeforePause = 0
+                songAdvanceElapsedBeforePause = 0
+                lyricPlaybackStartTime = nil
                 uploadStatus = "Loading \(stemsLabel) for \(song.title)..."
                 bleManager.audioBackpressureCount = 0
             }
@@ -926,6 +930,7 @@ struct ContentView: View {
         return stems
     }
     
+    /*
     func togglePlaybackFromHome() {
         guard canControlPlayback else { return }
 
@@ -954,7 +959,67 @@ struct ContentView: View {
             songAdvanceTask = nil
         }
     }
-    
+    */
+    func togglePlaybackFromHome() {
+        guard canControlPlayback else { return }
+
+        if isPlaying {
+            // PAUSE
+            if let start = lyricPlaybackStartTime {
+                let elapsed = Date().timeIntervalSince(start)
+                lyricElapsedBeforePause += elapsed
+                songAdvanceElapsedBeforePause += elapsed
+            }
+
+            isPlaying = false
+            lyricPlaybackStartTime = nil
+
+            bleManager.sendCommand("PAUSE")
+            uploadStatus = "Paused \(currentSong?.title ?? "song")"
+
+            lyricSendTask?.cancel()
+            lyricSendTask = nil
+
+            audioPacketSendTask?.cancel()
+            audioPacketSendTask = nil
+
+            songAdvanceTask?.cancel()
+            songAdvanceTask = nil
+        } else {
+            // RESUME
+            isPlaying = true
+            lyricPlaybackStartTime = Date()
+
+            bleManager.sendCommand("PLAY")
+            uploadStatus = "Resumed \(currentSong?.title ?? "song")"
+
+            startLyricSendingLoop(songDurationSec: currentSongDuration)
+
+            if !currentAudioPackets.isEmpty {
+                startAudioPacketSendingLoop(packetIntervalSec: 0.005)
+            }
+
+            if let duration = currentSongDuration, duration > 0 {
+                let remaining = max(0, duration - songAdvanceElapsedBeforePause)
+
+                songAdvanceTask?.cancel()
+                songAdvanceTask = Task {
+                    do {
+                        try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                    } catch {
+                        return
+                    }
+
+                    if Task.isCancelled { return }
+
+                    await MainActor.run {
+                        guard isPlaying else { return }
+                        playNextSongInLibrary()
+                    }
+                }
+            }
+        }
+    }
     // For tomorrow's demo there is not yet a real backend /library/ endpoint.
     // So refresh just stops the loading state and preserves the in-memory songs
     // that were added after successful uploads in this app session.
@@ -1200,17 +1265,25 @@ struct ContentView: View {
             return
         }
 
+        let baseElapsed = lyricElapsedBeforePause
         let playbackStart = lyricPlaybackStartTime ?? Date()
 
-        for (index, timedLine) in timedLines.enumerated() {
+        let tolerance = 0.4
+        let startIndex = timedLines.firstIndex(where: {
+            $0.timeSec >= (baseElapsed - tolerance)
+        }) ?? timedLines.count
+
+        for index in startIndex..<timedLines.count {
             if Task.isCancelled { return }
+
+            let timedLine = timedLines[index]
 
             while !isPlaying {
                 if Task.isCancelled { return }
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
 
-            let elapsed = Date().timeIntervalSince(playbackStart)
+            let elapsed = baseElapsed + Date().timeIntervalSince(playbackStart)
             let delayUntilLine = timedLine.timeSec - elapsed
 
             if delayUntilLine > 0 {
@@ -1225,7 +1298,7 @@ struct ContentView: View {
             }
 
             print("Sending timed lyric line \(index + 1)/\(timedLines.count): [\(timedLine.timeSec)] \(timedLine.text)")
-            let actualElapsed = Date().timeIntervalSince(playbackStart)
+            let actualElapsed = baseElapsed + Date().timeIntervalSince(playbackStart)
             let timingError = actualElapsed - timedLine.timeSec
 
             print(
@@ -1237,29 +1310,33 @@ struct ContentView: View {
                     timedLine.text
                 )
             )
+
             let chunks = makeDisplaySafeChunks(timedLine.text, maxCharactersPerChunk: 12)
 
-            // get next timestamp
             let nextTime = (index + 1 < timedLines.count)
                 ? timedLines[index + 1].timeSec
-                : timedLine.timeSec + 3.0  // fallback for last line
+                : timedLine.timeSec + 3.0
 
             let buffer: Double = 0.3
             let available = max(0.2, nextTime - timedLine.timeSec - buffer)
-
-            // spacing between chunks
             let spacing = available / Double(max(chunks.count, 1))
 
             for (chunkIndex, chunk) in chunks.enumerated() {
                 if Task.isCancelled { return }
 
-                // wait until correct time for this chunk
                 let targetTime = timedLine.timeSec + Double(chunkIndex) * spacing
-                let nowElapsed = Date().timeIntervalSince(playbackStart)
+                let nowElapsed = baseElapsed + Date().timeIntervalSince(playbackStart)
                 let delay = targetTime - nowElapsed
 
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                if Task.isCancelled { return }
+
+                while !isPlaying {
+                    if Task.isCancelled { return }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
                 }
 
                 print("SENDING CHUNK:", chunk)
@@ -1269,6 +1346,7 @@ struct ContentView: View {
                     uploadStatus = "Lyric: \(chunk)"
                 }
             }
+
             print("SENDING TO ESP32:", "LYRIC:\(timedLine.text)")
 
             await MainActor.run {
@@ -1354,7 +1432,14 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 guard self.isPlaying else { return }
 
+                if let start = self.lyricPlaybackStartTime {
+                    let elapsed = Date().timeIntervalSince(start)
+                    self.lyricElapsedBeforePause += elapsed
+                    self.songAdvanceElapsedBeforePause += elapsed
+                }
+
                 self.isPlaying = false
+                self.lyricPlaybackStartTime = nil
                 self.uploadStatus = "Paused from touch control"
 
                 self.lyricSendTask?.cancel()
@@ -1376,12 +1461,33 @@ struct ContentView: View {
                 guard !self.isPlaying else { return }
 
                 self.isPlaying = true
+                self.lyricPlaybackStartTime = Date()
                 self.uploadStatus = "Resumed from touch control"
 
                 self.startLyricSendingLoop(songDurationSec: self.currentSongDuration)
 
                 if !self.currentAudioPackets.isEmpty {
                     self.startAudioPacketSendingLoop(packetIntervalSec: 0.005)
+                }
+
+                if let duration = self.currentSongDuration, duration > 0 {
+                    let remaining = max(0, duration - self.songAdvanceElapsedBeforePause)
+
+                    self.songAdvanceTask?.cancel()
+                    self.songAdvanceTask = Task {
+                        do {
+                            try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                        } catch {
+                            return
+                        }
+
+                        if Task.isCancelled { return }
+
+                        await MainActor.run {
+                            guard self.isPlaying else { return }
+                            self.playNextSongInLibrary()
+                        }
+                    }
                 }
             }
             return
