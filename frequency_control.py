@@ -7,7 +7,7 @@ class Frequency_data():
     def __init__(self, filepath):
         self.filepath = filepath
         self.sample_rate = 0
-        self.raw_data = []
+        self.mono_normalized_data = []
         self.runtime = 0
         self.x_axis = []
         self.y_axis = []
@@ -25,14 +25,13 @@ def fill_data(data_object):
     data_object.raw_data = data
     data_object.runtime = len(data) / sample_rate
 
-    #CONVERT FROM STEREO TO MONO
+    #CONVERT TO MONO
     data = np.mean(data, axis=1, dtype=data.dtype)
 
     #COMPUTE AXES (FOR TIME DOMAIN)
     x_axis = np.arange(0, len(data)/sample_rate, 1/sample_rate)
     y_axis = np.abs(data)
 
-    #COMPUTE MAX AMPLITUDE FOR NORMALIZATION
     max_amp = compute_max_amp(y_axis)
     y_axis = y_axis / max_amp
 
@@ -55,16 +54,43 @@ def compute_avg_amp(y_axis):
     exclusions = 0
     for sample in y_axis:
         #exclude silences:
-        if sample < 0.01:
+        if sample < 0.1:
             exclusions += 1
         else:
             avg_amp += float(sample)
     #divide by number of samples minus number of ignored samples
-    avg_amp = avg_amp / (len(y_axis) - exclusions)
+    avg_amp = avg_amp / ((len(y_axis) - exclusions)+0.00001)
 
     return avg_amp
 
-def plot_wav_data(data_object, start_sample=0, end_sample=None):
+def plot_time_domain(data_object, start_sample=0, end_sample=None, threshold=None):
+
+    #if no end time is specified, default to the full runtime of the song
+    if end_sample is None:
+        end_sample = data_object.runtime*data_object.sample_rate
+
+    #RECOMPUTE X AND Y AXES
+    x_axis = data_object.x_axis[int(start_sample):int(end_sample)]
+    y_axis = data_object.y_axis[int(start_sample):int(end_sample)]
+
+    #ensure x and y axes are same length
+    min_len = min(len(x_axis), len(y_axis))
+    x_axis = x_axis[:min_len]
+    y_axis = y_axis[:min_len]
+
+    #compute average amplitude
+    if threshold is None:
+        threshold = compute_avg_amp(y_axis)
+
+    #PLOT TIME DOMAIN
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.plot(x_axis, y_axis, '-')
+    #plt.axhline(max_amp/2.3, color='green')
+    plt.axhline(threshold, color='red')
+    plt.show()
+
+def plot_frequency_domain(data_object, start_sample=0, end_sample=None):
 
     #if no end time is specified, default to the full runtime of the song
     if end_sample is None:
@@ -89,14 +115,6 @@ def plot_wav_data(data_object, start_sample=0, end_sample=None):
 
     #compute average amplitude
     avg_amp = compute_avg_amp(y_axis)
-
-    #PLOT TIME DOMAIN
-    plt.subplot(3, 1, 1)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.plot(x_axis, y_axis, '-')
-    #plt.axhline(max_amp/2.3, color='green')
-    plt.axhline(avg_amp, color='red')
     
     #PLOT ORIGINAL FREQUENCY DOMAIN
     #set the maximum frequency shown on graph
@@ -105,7 +123,7 @@ def plot_wav_data(data_object, start_sample=0, end_sample=None):
     #half sampling frequency divided by number of samples
     x_axis = freqs[:end]
     y_axis = np.abs(fourier[:end])
-    plt.subplot(3, 1, 2)
+    plt.subplot(2, 1, 1)
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Amplitude (dB)")
     plt.plot(x_axis, y_axis, '-')
@@ -131,28 +149,16 @@ def plot_wav_data(data_object, start_sample=0, end_sample=None):
     x_axis = freqs[:end]
     y_axis = np.abs(fourier[:end])
 
-    plt.subplot(3, 1, 3)
+    plt.subplot(2, 1, 2)
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Amplitude (dB)")
     plt.plot(x_axis, y_axis, '-')
     plt.show()
 
-def estimate_chunks(y_axis):
+def estimate_chunks(data_object):
 
-    #FIND AVERAGE AND MAX AMPLITUDES (EXLUDING SILENCES)
-    avg_amp = 0
-    max_amp = 0
-    exclusions = 0
-    for sample in y_axis:
-        #EXCLUDE SAMPLES BELOW A SILENCE THRESHOLD
-        if sample <= 100:
-            exclusions += 1
-        else:
-            #FORCE TO INTEGER SO NO OVERFLOW
-            avg_amp += int(sample)
-        if sample > max_amp:
-            max_amp = sample
-    avg_amp /= (len(y_axis) - exclusions)
+    #FIND AVERAGE AMPLITUDE (EXLUDING SILENCES)
+    avg_amp = compute_avg_amp(data_object.y_axis)
 
     #COMPUTE ESTIMATED BLOCKS
     
@@ -166,7 +172,7 @@ def estimate_chunks(y_axis):
     start = 0
     silence_start = 0
     chunk_list = []
-    for i, sample in enumerate(y_axis):
+    for i, sample in enumerate(data_object.y_axis):
         if state == 0:
             #IF THE START OF A CHUNK IS DETECTED
             if sample > avg_amp:
@@ -178,8 +184,8 @@ def estimate_chunks(y_axis):
                 silence_start = i
                 state = 2
         elif state == 2:
-            #if silence has persisted for a second
-            if i - silence_start >= 44100:
+            #if silence has persisted for half a second
+            if i - silence_start >= 44100/2:
                 state = 3
             #else if sample detects an amplitude spike, go back a state and set silence_start
             elif sample >= avg_amp:
@@ -198,7 +204,7 @@ def estimate_chunks(y_axis):
         else:
             print("FSM has escaped its states")
 
-    return chunk_list
+    data_object.chunk_list = chunk_list
 
 def estimate_words_per_chunk(data_object):
     
@@ -208,20 +214,8 @@ def estimate_words_per_chunk(data_object):
 
         y_axis = data_object.y_axis[chunk[0]:chunk[1]]
 
-        #FIND AVERAGE AND MAX AMPLITUDES (EXLUDING SILENCES)
-        avg_amp = 0
-        max_amp = 0
-        exclusions = 0
-        for sample in y_axis:
-            #EXCLUDE SAMPLES BELOW A SILENCE THRESHOLD
-            if sample <= 100:
-                exclusions += 1
-            else:
-                #FORCE TO INTEGER SO NO OVERFLOW
-                avg_amp += int(sample)
-            if sample > max_amp:
-                max_amp = sample
-        avg_amp /= (len(y_axis) - exclusions)
+        avg_amp = compute_avg_amp(y_axis)
+        threshold = avg_amp
 
         #COMPUTE ESTIMATED BLOCKS
         
@@ -231,29 +225,29 @@ def estimate_words_per_chunk(data_object):
         #2 - IF CHUNK_CHECK IS TRUE, SEARCH FOR END OF CHUNK
         #3 - STORE CHUNK WITH PROPER TIMESTAMP
         
-        start = 0
         state = 0
         words_in_chunk = 0
         for i, sample in enumerate(y_axis):
             if state == 0:
                 #IF THE START OF A CHUNK IS DETECTED
-                if sample > max_amp/2.3:
+                if sample > threshold:
                     #GO TO NEXT STATE TO FIND SHORT SILENCE
                     start = i
                     state = 1
             elif state == 1:
-                #SILENCE = BELOW MAX_AMP/2.3 FOR 0.1 SECOND
-                if sample < max_amp/2.3:
+                if sample < threshold:
                     silence_start = i
                     state = 2
             elif state == 2:
+                #SILENCE = UNDER THRESHOLD FOR 0.1 SECOND
                 if i - silence_start >= 44100/10:
                     state = 3
-                elif sample >= max_amp/2.3:
+                #otherwise, assume we are still in the same word and revert to state 1
+                elif sample >= threshold:
                     state = 1
             elif state == 3:
                 #SCRAP IF WORD IS LESS THAN 0.2 SECONDS
-                if silence_start - i < 44100/5:
+                if silence_start - start < 44100/5:
                     state = 0
                 #ADD NEW CHUNK TO LIST AND RESET TO STATE 0
                 #APPEND AS SAMPLE #S FOR FUTURE USE
@@ -266,64 +260,288 @@ def estimate_words_per_chunk(data_object):
         words_in_chunk += 1
         words_per_chunk_list.append(words_in_chunk)
         print(words_in_chunk)
-        plot_wav_data(data_object, chunk[0], chunk[1])
+        #plot_time_domain(data_object, chunk[0], chunk[1], threshold)
 
     return words_per_chunk_list
 
-def words_per_line(filepath):
+def estimate_words_energy(data_object):
+
+    words_per_chunk = []
+    frame_size = int(0.03 * data_object.sample_rate)
+    step_size = int(0.01 * data_object.sample_rate)
+    
+    for chunk in data_object.chunk_list:
+
+        y_axis = data_object.y_axis[chunk[0]:chunk[1]]
+
+        energy = []
+
+        #compute energy on per-frame basis
+        for i in range(0, len(y_axis) - frame_size, step_size):
+            frame = y_axis[i:i+frame_size]
+            #RMS
+            energy.append(np.sqrt(np.mean(frame**2)))
+
+        #transfer to a numpy array
+        energy = np.array(energy)
+
+        #smooth and normalize signal
+        window_size = 30
+        smoothed = np.convolve(energy, np.ones(window_size)/window_size, mode='same')
+        smoothed = smoothed / max(smoothed)
+        x_smoothed = list(range(len(smoothed)))
+
+        #detect valleys for word detection
+        valleys = []
+
+        for i in range(1, len(smoothed)-1):
+            if smoothed[i] < smoothed[i-1] and smoothed[i] < smoothed[i+1]:
+                valleys.append(i)
+
+        #filter based on a tuned threshold
+        threshold = 0.6  # tune this
+        avg = 0
+        for entry in smoothed:
+            avg += entry
+        avg = avg/len(smoothed)
+
+        filtered_valleys = [i for i in valleys if smoothed[i] < threshold]
+        words_per_chunk.append(len(filtered_valleys))
+
+        '''
+        print(f"ulfiltered valleys: {valleys}")
+        print(f"filtered valleys: {filtered_valleys}")
+        x_axis = list(range(len(y_axis)))
+        plt.subplot(2, 1, 1)
+        plt.plot(x_axis, y_axis)
+        plt.subplot(2, 1, 2)
+        plt.plot(x_smoothed, smoothed)
+        plt.axhline(avg, color='red')
+        plt.plot()
+        plt.show()
+        '''
+    return words_per_chunk
+
+def words_in_line(line):
 
     #ANALYZE WORDS PER LINE IN LYRIC FILE
-    filename = "Strutter_expected.txt"
-    words_per_line = []
     words = 0
-    with open(filename, "r") as f:
-        for line in f:
-            for c in line:
-                if c == " ":
-                    words += 1
-            words_per_line.append(words)
-            words = 0
+    for c in line:
+        if c == " ":
+            words += 1
 
-    return words_per_line
-
-#create object, fill with data, and plot
+    return words
+'''
+#create object and fill with data
 strutter_vocals_data = Frequency_data("Strutter/Strutter - KISS_vocals.wav")
 fill_data(strutter_vocals_data)
-plot_wav_data(strutter_vocals_data)
-'''
-strutter_chunk_list = estimate_chunks(strutter_vocals_data.y_axis)
 
-strutter_vocals_data.chunk_list = strutter_chunk_list
+#count the number of phrases and print their timestamps
+estimate_chunks(strutter_vocals_data)
+
 print(len(strutter_vocals_data.chunk_list))
+for entry in strutter_vocals_data.chunk_list:
+    print(entry[0]/44100, entry[1]/44100)
 
-words_per_chunk_list = estimate_words_per_chunk(strutter_vocals_data)
+#plot for comparison to above
+plot_time_domain(strutter_vocals_data)
 
-for entry in words_per_chunk_list:
-    print(entry)
-
-plot_wav_data(strutter_vocals_data)
-
-#words_per_chunk_strutter = estimate_words_per_chunk(strutter_vocals_data)
-#print(words_per_chunk_strutter)
+#count number of words per phrase
+estimate_words_energy(strutter_vocals_data)
 '''
 '''
+#create object, fill with data, and plot
 rooster_vocals_data = Frequency_data("Rooster/Rooster - Alice in Chains_vocals.wav")
 fill_data(rooster_vocals_data)
 
-rooster_chunk_list = estimate_chunks(rooster_vocals_data.y_axis)
+#count the number of phrases and print their timestamps
+estimate_chunks(rooster_vocals_data)
 
-rooster_vocals_data.chunk_list = rooster_chunk_list
 print(len(rooster_vocals_data.chunk_list))
 for entry in rooster_vocals_data.chunk_list:
     print(entry[0]/44100, entry[1]/44100)
 
-words_per_chunk_list = estimate_words_per_chunk(rooster_vocals_data)
+rooster_words_per_chunk = estimate_words_per_chunk(rooster_vocals_data)
+print(rooster_words_per_chunk)
 
-for entry in words_per_chunk_list:
-    print(entry)
+#plot for comparison to above
+#plot_time_domain(rooster_vocals_data)
 
-plot_wav_data(rooster_vocals_data)
-
-#words_per_chunk_strutter = estimate_words_per_chunk(strutter_vocals_data)
-#print(words_per_chunk_strutter)
+#count number of words per phrase
+#estimate_words_energy(rooster_vocals_data)
 '''
+'''
+#create object, fill with data, and plot
+idontloveyou_vocals_data = Frequency_data("I Don't Love You/I Don't Love You - My Chemical Romance_vocals.wav")
+fill_data(idontloveyou_vocals_data)
+
+#count the number of phrases and print their timestamps
+estimate_chunks(idontloveyou_vocals_data)
+
+print(len(idontloveyou_vocals_data.chunk_list))
+for entry in idontloveyou_vocals_data.chunk_list:
+    print(entry[0]/44100, entry[1]/44100)
+
+idontloveyou_words_per_chunk = estimate_words_per_chunk(idontloveyou_vocals_data)
+print(idontloveyou_words_per_chunk)
+'''
+#create object, fill with data, and plot
+#interstate_vocals_data = Frequency_data("Interstate Love Song/Interstate Love Song - Stone Temple Pilots_vocals.wav")
+#fill_data(interstate_vocals_data)
+
+#plot_time_domain(interstate_vocals_data)
+
+#count the number of phrases and print their timestamps
+#estimate_chunks(interstate_vocals_data)
+
+#print(len(interstate_vocals_data.chunk_list))
+#for entry in interstate_vocals_data.chunk_list:
+    #print(entry[0]/44100, entry[1]/44100)
+
+#interstate_words_per_chunk = estimate_words_per_chunk(interstate_vocals_data)
+#print(interstate_words_per_chunk)
+
+####
+#FOR SYNCING LYRICS
+#try to identify repeating lines because they will likely take the same amount of time to be sang!!!!!
+
+def lyric_sync(data_object, lyric_file):
+
+    synced_file = []
+    total_lines = 0
+    total_words = 0
+    total_chunks = len(data_object.chunk_list)
+    chunk_index = 0
+
+    skip = 0
+    i = 0
+
+    with open(lyric_file, "r") as f:
+        lines = f.readlines()
+    with open(lyric_file, "r") as f:
+        for line in f:
+            total_words += words_in_line(line)
+            total_lines += 1
+
+    print("STARTING LYRIC SYNC\n\n\n")
+    print(f"total lines: {total_lines}, total chunks: {total_chunks}")
+
+    #if there significantly less chunks detected than there are actual lines of lyrics
+    if (total_lines - total_chunks > 5):
+
+        #find the average amount of time per known line in lyric file
+        total_time_singing = 0
+        for chunk in data_object.chunk_list:
+            total_time_singing += chunk[1] - chunk[0]
+        avg_time_per_word = total_time_singing / total_words / data_object.sample_rate
+        print(f"time per word: {avg_time_per_word}")
+
+        #create a list of the expected length of each individual chunk based on average time per word
+        expected_chunk_lengths = []
+        for line in lines:
+            expected_chunk_lengths.append(words_in_line(line)*avg_time_per_word)
+
+        #20% error per word length
+        error_allowed = 0.2
+            
+        #here we will have to use chunks lengths to determine when lyrics are likely displayed
+        j = 0
+        while j < total_lines:
+
+            #end process if index has exceeded the number of estimated chunks in the song
+            if chunk_index >= len(data_object.chunk_list)-1:
+                break
+
+            current_timestamp = [round(data_object.chunk_list[chunk_index][0] / data_object.sample_rate, 1), round(data_object.chunk_list[chunk_index][1] / data_object.sample_rate, 1)]
+            current_length = current_timestamp[1] - current_timestamp[0]
+
+            #first check if this is a normally sized commit
+            #given estimated time and an error window
+            print(f"\n\n\ncurrent line: {lines[j]}")
+            print(f"words in this line: {words_in_line(lines[j])}")
+            print(f"low end of expected length: {expected_chunk_lengths[j]*(1-error_allowed)}, high end of expected length: {expected_chunk_lengths[j]*(1+error_allowed)}")
+            print(f"actual length of line: {current_length}")
+
+            written = 0
+            possible_length = expected_chunk_lengths[j]
+            extra_lines = 0
+            while (not written):
+                #see if the current line fits within or below the expected chunk length
+                if (current_length < possible_length*(1+error_allowed)):
+                    synced_file.append(f"[{current_timestamp[0]}] {' '.join(lines[j+k] for k in range(0, extra_lines+1))}")
+                    j += extra_lines+1
+                    written = 1
+                #otherwise add next line length and check again
+                else:
+                    extra_lines += 1
+                    possible_length += expected_chunk_lengths[j+extra_lines]
+
+            chunk_index += 1
+
+    else:
+
+        for line in lines:
+
+            line_written = 0
+
+            if skip == 1:
+                line_written = 1
+                skip = 0
+
+            #fail safe
+            if chunk_index == total_chunks-1:
+                break
+
+            next_line = lines[i+1] if i+1 < len(lines) else ""
+
+            words = words_in_line(line)
+            next_words = words_in_line(next_line)
+
+            while (not line_written):
+
+                current_timestamp = [round(data_object.chunk_list[chunk_index][0] / data_object.sample_rate, 1), round(data_object.chunk_list[chunk_index][1] / data_object.sample_rate, 1)]
+                next_timestamp = [round(data_object.chunk_list[chunk_index+1][0] / data_object.sample_rate, 1), round(data_object.chunk_list[chunk_index+1][1] / data_object.sample_rate, 1)] if chunk_index+1 < len(data_object.chunk_list) else [0, 0]
+                current_length = current_timestamp[1] - current_timestamp[0]
+                next_length = next_timestamp[1] - next_timestamp[0]
+                additional = ''
+
+                #first, check if the next set of words should be appended to the current
+                if next_length > 2 and next_words <= 2:
+                    line = line + ", " + next_line
+                    skip = 1
+
+                #now, check if we should skip this index (short phrases only)
+                if current_length < 2:
+                    if words > 2:
+                        #chunk index will increase regardless, this simply skips appending
+                        pass
+                    #otherwise, it is likely that this 2 or less word line actually fits in this chunk!
+                    else:
+                        synced_file.append(f"[{current_timestamp[0]}] {line} {additional}")
+                        line_written = 1
+                    #increase index
+                    chunk_index += 1
+                #otherwise, this is a > 2 second phrase
+                else:
+                    if words <= 2:
+                        #there will need to be another check implemented here with CUSTOM ESTIMATED WORDS
+                        chunk_index += 1
+                    else:
+                        synced_file.append(f"[{current_timestamp[0]}] {line}")
+                        line_written = 1
+                        chunk_index += 1
+            i += 1
+    
+
+        output_file = f"{data_object.filepath}_timestamps.txt"
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        for line in synced_file:
+            f.write(line.strip() + "\n")
+
+    print(f"Timestamped lyrics written to: {output_file}")
+    return output_file
+
+#lyric_sync(idontloveyou_vocals_data, "I Don't Love You/I Don't Love You_lyrics_finalized.txt")
+#lyric_sync(strutter_vocals_data, "Strutter_lyrics_finalized.txt")
+#lyric_sync(interstate_vocals_data, "Interstate Love Song/Interstate Love Song_lyrics_finalized.txt")
