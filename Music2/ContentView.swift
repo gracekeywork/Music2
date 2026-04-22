@@ -139,12 +139,12 @@ struct ContentView: View {
                                 HStack {
                                     Text("Playback Settings")
                                         .font(.headline)
-                                        .foregroundColor(.white)
+                                        .foregroundColor(.birchCream)
 
                                     Spacer()
 
                                     Image(systemName: isPlaybackSettingsExpanded ? "chevron.up" : "chevron.down")
-                                        .foregroundColor(.white)
+                                        .foregroundColor(.birchCream)
                                 }
                             }
                             .buttonStyle(.plain)
@@ -153,7 +153,7 @@ struct ContentView: View {
                                 VStack(alignment: .leading, spacing: 16) {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text("Stem 1")
-                                            .foregroundColor(.white)
+                                            .foregroundColor(.birchCream)
 
                                         Picker("Stem 1", selection: $selectedStem1) {
                                             Text("Drums").tag(StemType.drums)
@@ -165,7 +165,7 @@ struct ContentView: View {
 
                                         HStack {
                                             Text("Level")
-                                                .foregroundColor(.white)
+                                                .foregroundColor(.birchCream)
                                             Spacer()
                                             Text("\(Int(stemLevel1 * 100))%")
                                                 .foregroundColor(.gray)
@@ -177,7 +177,7 @@ struct ContentView: View {
 
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text("Stem 2")
-                                            .foregroundColor(.white)
+                                            .foregroundColor(.birchCream)
 
                                         Picker("Stem 2", selection: $selectedStem2) {
                                             Text("None").tag(StemChoice.none)
@@ -190,7 +190,7 @@ struct ContentView: View {
 
                                         HStack {
                                             Text("Level")
-                                                .foregroundColor(.white)
+                                                .foregroundColor(.birchCream)
                                             Spacer()
                                             Text("\(Int(stemLevel2 * 100))%")
                                                 .foregroundColor(.gray)
@@ -210,7 +210,7 @@ struct ContentView: View {
                                             Text("Confirm Playback Settings")
                                                 .fontWeight(.semibold)
                                         }
-                                        .foregroundColor(.white)
+                                        .foregroundColor(.birchCream)
                                         .frame(maxWidth: .infinity)
                                         .padding()
                                         .background(currentSong == nil ? Color.darkChestnut : Color.copperRust)
@@ -234,7 +234,7 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 16) {
                                 Text("Now Playing")
                                     .font(.headline)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.birchCream)
                                 
                                 HStack(spacing: 16) {
                                     RoundedRectangle(cornerRadius: 16)
@@ -243,14 +243,14 @@ struct ContentView: View {
                                         .overlay(
                                             Image(systemName: "waveform")
                                                 .font(.system(size: 30))
-                                                .foregroundColor(.white)
+                                                .foregroundColor(.birchCream)
                                         )
                                     
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(currentSong?.title ?? "")
                                             .font(.title3)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.white)
+                                            .foregroundColor(.birchCream)
                                             .lineLimit(2)
                                         
                                         Text(nowPlayingSubtitle)
@@ -267,7 +267,7 @@ struct ContentView: View {
                                     }) {
                                         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                                             .font(.system(size: 22))
-                                            .foregroundColor(.white)
+                                            .foregroundColor(.birchCream)
                                             .frame(width: 60, height: 60)
                                             .background(homePlayButtonColor)
                                             .clipShape(Circle())
@@ -300,10 +300,10 @@ struct ContentView: View {
                                     Text("Refresh")
                                 }
                                 .font(.caption)
-                                .foregroundColor(.white)
+                                .foregroundColor(.birchCream)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.08))
+                                .background(Color.birchCream.opacity(0.08))
                                 .cornerRadius(10)
                             }
                         }
@@ -342,29 +342,29 @@ struct ContentView: View {
                                 .font(.subheadline)
                                 .padding()
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.darkChestnut.opacity(0.9))
+                                .background(Color.warmAmber.opacity(0.9))
                                 .cornerRadius(12)
                         }
                         
                         // MARK: - Library List
                         if isLoadingLibrary {
                             ProgressView()
-                                .tint(.white)
+                                .tint(.birchCream)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical)
                         } else if librarySongs.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("No songs in library yet")
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.birchCream)
                                     .font(.headline)
                                 
                                 Text("Upload a song or refresh the library to load available tracks.")
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.paleOchre)
                                     .font(.subheadline)
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.darkChestnut.opacity(0.85))
+                            .background(Color.burntSienna.opacity(0.85))
                             .cornerRadius(16)
                         } else {
                             VStack(spacing: 12) {
@@ -383,7 +383,7 @@ struct ContentView: View {
 
                                             VStack(alignment: .leading, spacing: 4) {
                                                 Text(song.title)
-                                                    .foregroundColor(.white)
+                                                    .foregroundColor(.birchCream)
                                                     .font(.headline)
                                                     .multilineTextAlignment(.leading)
 
@@ -424,6 +424,7 @@ struct ContentView: View {
                         }
                         
                         // MARK: - BLE Message / Debug Status
+                        /*
                         if !bleManager.lastReceivedMessage.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Device Message")
@@ -438,7 +439,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.green.opacity(0.12))
                             .cornerRadius(12)
-                        }
+                        }*/
                     }
                     .padding()
                 }
@@ -483,7 +484,7 @@ struct ContentView: View {
             )
         } else {
             return LinearGradient(
-                colors: [Color.gray.opacity(0.7), Color.white.opacity(0.15)],
+                colors: [Color.gray.opacity(0.7), Color.birchCream.opacity(0.15)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -585,6 +586,64 @@ struct ContentView: View {
 
         return timedLines.sorted { $0.timeSec < $1.timeSec }
     }
+    
+    /*
+    func makeFourWordChunks(_ text: String) -> [String] {
+        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        
+        var chunks: [String] = []
+        var current: [String] = []
+        
+        for word in words {
+            current.append(word)
+            
+            if current.count == 4 {
+                chunks.append(current.joined(separator: " "))
+                current.removeAll()
+            }
+        }
+        
+        // handle leftover words
+        if !current.isEmpty {
+            if current.count == 1, var last = chunks.last {
+                last += " " + current[0]
+                chunks[chunks.count - 1] = last
+            } else {
+                chunks.append(current.joined(separator: " "))
+            }
+        }
+        
+        return chunks
+    }
+     */
+    func makeDisplaySafeChunks(_ text: String, maxCharactersPerChunk: Int = 12) -> [String] {
+        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+
+        var chunks: [String] = []
+        var currentChunk = ""
+
+        for word in words {
+            let candidate = currentChunk.isEmpty ? word : currentChunk + " " + word
+
+            if candidate.count <= maxCharactersPerChunk {
+                currentChunk = candidate
+            } else {
+                if !currentChunk.isEmpty {
+                    chunks.append(currentChunk)
+                }
+
+                currentChunk = word
+            }
+        }
+
+        if !currentChunk.isEmpty {
+            chunks.append(currentChunk)
+        }
+
+        return chunks
+    }
+    
+    
     // MARK: - Actions
     
     // End-to-end demo flow:
@@ -600,6 +659,10 @@ struct ContentView: View {
         songAdvanceTask = nil
         audioPacketSendTask?.cancel()
         audioPacketSendTask = nil
+        
+        //if bleManager.isConnected {
+          //      bleManager.sendCommand("CLEAR")
+           // }
         print("selectedStem1 at playback start:", selectedStem1)
         print("selectedStem2 at playback start:", selectedStem2)
         print("requestedStems at playback start:", requestedStems)
@@ -1174,7 +1237,38 @@ struct ContentView: View {
                     timedLine.text
                 )
             )
-            bleManager.sendCommand("LYRIC:\(timedLine.text)")
+            let chunks = makeDisplaySafeChunks(timedLine.text, maxCharactersPerChunk: 12)
+
+            // get next timestamp
+            let nextTime = (index + 1 < timedLines.count)
+                ? timedLines[index + 1].timeSec
+                : timedLine.timeSec + 3.0  // fallback for last line
+
+            let buffer: Double = 0.3
+            let available = max(0.2, nextTime - timedLine.timeSec - buffer)
+
+            // spacing between chunks
+            let spacing = available / Double(max(chunks.count, 1))
+
+            for (chunkIndex, chunk) in chunks.enumerated() {
+                if Task.isCancelled { return }
+
+                // wait until correct time for this chunk
+                let targetTime = timedLine.timeSec + Double(chunkIndex) * spacing
+                let nowElapsed = Date().timeIntervalSince(playbackStart)
+                let delay = targetTime - nowElapsed
+
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                print("SENDING CHUNK:", chunk)
+                bleManager.sendCommand("LYRIC:\(chunk)")
+
+                await MainActor.run {
+                    uploadStatus = "Lyric: \(chunk)"
+                }
+            }
             print("SENDING TO ESP32:", "LYRIC:\(timedLine.text)")
 
             await MainActor.run {
