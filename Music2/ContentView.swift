@@ -525,6 +525,17 @@ struct ContentView: View {
             isPlaying = false
             songAdvanceTask?.cancel()
             songAdvanceTask = nil
+
+            lyricSendTask?.cancel()
+            lyricSendTask = nil
+
+            audioPacketSendTask?.cancel()
+            audioPacketSendTask = nil
+
+            if bleManager.isConnected {
+                bleManager.sendCommand("CLEAR")
+            }
+
             uploadStatus = "Reached end of library"
             return
         }
