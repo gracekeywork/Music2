@@ -783,14 +783,20 @@ struct ContentView: View {
 
                 if stemsToLoad.count == 1 {
                     let mono = monoSamplesList[stemsToLoad[0]]!
-                    stereoData = AudioChunkLoader.makeStereoPCMDataDuplicatingMono(mono)
+                    let scaledMono = scaleSamples(mono, gain: stemLevel1)
+
+                    stereoData = AudioChunkLoader.makeStereoPCMDataDuplicatingMono(scaledMono)
+
                 } else if stemsToLoad.count >= 2 {
                     let leftSamples = monoSamplesList[stemsToLoad[0]]!
                     let rightSamples = monoSamplesList[stemsToLoad[1]]!
 
+                    let scaledLeft = scaleSamples(leftSamples, gain: stemLevel1)
+                    let scaledRight = scaleSamples(rightSamples, gain: stemLevel2)
+
                     stereoData = AudioChunkLoader.makeStereoPCMData(
-                        left: leftSamples,
-                        right: rightSamples
+                        left: scaledLeft,
+                        right: scaledRight
                     )
                 } else {
                     throw NSError(
@@ -1489,6 +1495,16 @@ struct ContentView: View {
         }
     }
     */
+    
+    func scaleSamples(_ samples: [Int16], gain: Double) -> [Int16] {
+        let clampedGain = max(0.0, min(gain, 1.0))
+
+        return samples.map { sample in
+            let scaled = Double(sample) * clampedGain
+            let clipped = max(Double(Int16.min), min(Double(Int16.max), scaled))
+            return Int16(clipped.rounded())
+        }
+    }
     
     func handleIncomingBLEMessage(_ message: String) {
         let cleanMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
