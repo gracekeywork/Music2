@@ -618,6 +618,7 @@ struct ContentView: View {
         return chunks
     }
      */
+    /*
     func makeDisplaySafeChunks(_ text: String, maxCharactersPerChunk: Int = 12) -> [String] {
         let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
 
@@ -645,6 +646,54 @@ struct ContentView: View {
         return chunks
     }
     
+     */
+    func makeDisplaySafeChunks(_ text: String) -> [String] {
+        let maxCharsPerRow = 10
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+
+        var chunks: [String] = []
+        var row1 = ""
+        var row2 = ""
+
+        func flushChunk() {
+            guard !row1.isEmpty || !row2.isEmpty else { return }
+            if row2.isEmpty {
+                chunks.append(row1)
+            } else {
+                chunks.append(row1 + "\n" + row2)
+            }
+            row1 = ""
+            row2 = ""
+        }
+
+        for word in words {
+            // If a single word is too long to fit on one size-2 line,
+            // send it alone rather than dropping it.
+            if word.count > maxCharsPerRow {
+                flushChunk()
+                chunks.append(word)
+                continue
+            }
+
+            if row1.isEmpty {
+                row1 = word
+            } else if (row1 + " " + word).count <= maxCharsPerRow {
+                row1 += " " + word
+            } else if row2.isEmpty {
+                row2 = word
+            } else if (row2 + " " + word).count <= maxCharsPerRow {
+                row2 += " " + word
+            } else {
+                flushChunk()
+                row1 = word
+            }
+        }
+
+        flushChunk()
+        return chunks
+    }
+
+        
     
     // MARK: - Actions
     
@@ -662,9 +711,9 @@ struct ContentView: View {
         audioPacketSendTask?.cancel()
         audioPacketSendTask = nil
         
-        //if bleManager.isConnected {
-          //      bleManager.sendCommand("CLEAR")
-           // }
+        if bleManager.isConnected {
+            bleManager.sendCommand("CLEAR")
+            }
         print("selectedStem1 at playback start:", selectedStem1)
         print("selectedStem2 at playback start:", selectedStem2)
         print("requestedStems at playback start:", requestedStems)
@@ -791,6 +840,9 @@ struct ContentView: View {
                 }
 
             } catch {
+                if bleManager.isConnected {
+                        bleManager.sendCommand("CLEAR")
+                    }
                 await MainActor.run {
                     isPlaying = false
                     uploadStatus = "Playback failed: \(error.localizedDescription)"
@@ -1230,6 +1282,10 @@ struct ContentView: View {
 
                 print("BLE STABILITY | backpressure events during song: \(backpressureCount)")
 
+                if bleManager.isConnected {
+                    bleManager.sendCommand("CLEAR")
+                }
+
                 await MainActor.run {
                     if let song = currentSong {
                         uploadStatus = "Audio complete for \(song.title) • backpressure events: \(backpressureCount)"
@@ -1239,7 +1295,6 @@ struct ContentView: View {
                 }
                 return
             }
-
             let packet = currentAudioPackets[currentPacketIndex]
             bleManager.sendAudioPacket(packet)
 
@@ -1311,7 +1366,8 @@ struct ContentView: View {
                 )
             )
 
-            let chunks = makeDisplaySafeChunks(timedLine.text, maxCharactersPerChunk: 12)
+           // let chunks = makeDisplaySafeChunks(timedLine.text, maxCharactersPerChunk: 12)
+            let chunks = makeDisplaySafeChunks(timedLine.text)
 
             let nextTime = (index + 1 < timedLines.count)
                 ? timedLines[index + 1].timeSec
@@ -1353,6 +1409,9 @@ struct ContentView: View {
                 currentLyricChunkIndex = index + 1
                 uploadStatus = "Sending lyric: \(timedLine.text)"
             }
+        }
+        if bleManager.isConnected {
+            bleManager.sendCommand("CLEAR")
         }
 
         await MainActor.run {
